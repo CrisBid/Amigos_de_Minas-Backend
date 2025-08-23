@@ -1,0 +1,80 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  //output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  STAFF
+  SPONSOR
+}
+
+enum SponsorshipStatus {
+  PENDING
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  roles        Role[]   @default([SPONSOR])
+  // Refresh token (hash) para rotação segura
+  refreshHash  String?  // hash do RT atual
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sponsorships Sponsorship[] // apadrinhamentos feitos por este usuário
+}
+
+model Child {
+  id          String   @id @default(cuid())
+  name        String
+  birthDate   DateTime?
+  age         Int?
+  city        String
+  school      String?
+  category    String?   // ex: "Bonecas", "Carrinhos" etc.
+  wantedGift  String?   // "presente desejado"
+  photoUrl    String?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  sponsorships Sponsorship[]
+}
+
+model Sponsorship {
+  id        String              @id @default(cuid())
+  childId   String
+  sponsorId String              // User.id (quem apadrinha)
+  status    SponsorshipStatus   @default(PENDING)
+  startDate DateTime?           // quando ativou
+  endDate   DateTime?
+  note      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  child     Child   @relation(fields: [childId], references: [id])
+  sponsor   User    @relation(fields: [sponsorId], references: [id])
+
+  @@index([childId])
+  @@index([sponsorId])
+  @@index([status])
+}
