@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { SponsorshipsService } from './sponsorships.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -11,23 +11,26 @@ export class SponsorshipsController {
 
   // Usuário logado cria um pedido de apadrinhamento (PENDING)
   @Post()
-  create(@Body() body: { childId: string; note?: string }, @Req() req: any) {
-    return this.service.create(body.childId, req.user.sub, body.note);
+  create(
+    @Body() body: { childId: string; campaignId: string; note?: string },
+    @Req() req: any
+  ) {
+    if (!body.campaignId) throw new BadRequestException('campaignId é obrigatório');
+    return this.service.create(body.childId, req.user.sub, body.campaignId, body.note);
   }
 
-  // Lista apadrinhamentos do usuário
   @Get('me')
-  mine(@Req() req: any) {
-    return this.service.mine(req.user.sub);
+  mine(@Req() req: any, @Query('campaignId') campaignId?: string) {
+    return this.service.mine(req.user.sub, campaignId);
   }
 
-  // Admin/Staff listam todos
   @UseGuards(RolesGuard)
   @Roles('ADMIN','STAFF')
   @Get()
-  listAll() {
-    return this.service.listAll();
+  listAll(@Query('campaignId') campaignId?: string) {
+    return this.service.listAll(campaignId);
   }
+
 
   // Admin/Staff ativam ou encerram
   @UseGuards(RolesGuard)

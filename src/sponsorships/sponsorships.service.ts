@@ -5,32 +5,37 @@ import { PrismaService } from '../prisma/prisma.service'
 export class SponsorshipsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(childId: string, sponsorUserId: string, note?: string) {
-    // Evita duplicidade ativa
-    const active = await this.prisma.sponsorship.findFirst({
-      where: { childId, status: 'ACTIVE' },
+  async create(childId: string, sponsorUserId: string, campaignId: string, note?: string) {
+    const dup = await this.prisma.sponsorship.findUnique({
+      where: { childId_campaignId: { childId, campaignId } },
     });
-    if (active) throw new BadRequestException('Criança já possui apadrinhamento ativo.');
+    if (dup) throw new BadRequestException('Esta criança já está vinculada a esta campanha.');
 
     return this.prisma.sponsorship.create({
-      data: { childId, sponsorId: sponsorUserId, note, status: 'PENDING' },
+      data: { childId, sponsorId: sponsorUserId, campaignId, note, status: 'PENDING' },
+      include: { child: true, campaign: true },
     });
   }
 
-  mine(sponsorUserId: string) {
+  mine(sponsorUserId: string, campaignId?: string) {
     return this.prisma.sponsorship.findMany({
-      where: { sponsorId: sponsorUserId },
-      include: { child: true },
-      orderBy: { createdAt: 'desc' },
+      where: { sponsorId: sponsorUserId, ...(campaignId ? { campaignId } : {}) },
+      include: {
+        child: true,
+        campaign: true,
+      },
+      orderBy: [{ createdAt: 'desc' }],
     });
   }
 
-  listAll() {
+  listAll(campaignId?: string) {
     return this.prisma.sponsorship.findMany({
-      include: { child: true, sponsor: { select: { id: true, name: true, email: true } } },
-      orderBy: { createdAt: 'desc' },
+      where: campaignId ? { campaignId } : undefined,
+      include: { child: true, sponsor: { select: { id: true, name: true, email: true } }, campaign: true },
+      orderBy: [{ createdAt: 'desc' }],
     });
   }
+
 
   async activate(id: string) {
     return this.prisma.sponsorship.update({

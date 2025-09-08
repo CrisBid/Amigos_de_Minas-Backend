@@ -27,54 +27,137 @@ enum SponsorshipStatus {
   CANCELLED
 }
 
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  FINISHED
+  ARCHIVED
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
   email        String   @unique
   passwordHash String
   roles        Role[]   @default([SPONSOR])
-  // Refresh token (hash) para rotação segura
-  refreshHash  String?  // hash do RT atual
+  refreshHash  String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  sponsorships Sponsorship[] // apadrinhamentos feitos por este usuário
+  sponsorships Sponsorship[]
+  profile      Profile?
+}
+
+model Profile {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  phone         String?
+  cep           String?
+  address       String?
+  city          String?
+  profession    String?
+  incomeRange   String?
+  maritalStatus String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  publicId    Int?           @unique      // <— opcional: ID inteiro da campanha (para pasta)
+  name        String
+  slug        String         @unique
+  year        Int?
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  status      CampaignStatus @default(DRAFT)
+  frameKey    String?
+  frameUrl    String?
+  frameConfig Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  sponsorships Sponsorship[]
+  media       ChildCampaignMedia[]
+}
+
+model City {
+  id        String   @id @default(cuid())
+  publicId  Int      @unique           // <— ID inteiro da cidade (para pasta)
+  name      String
+  state     String?                  // "MG", etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  children  Child[]
 }
 
 model Child {
   id          String   @id @default(cuid())
+  publicId    Int      @unique        // <— ID inteiro simples da criança (para pasta)
   name        String
   birthDate   DateTime?
   age         Int?
-  city        String
+  // Relacionamento com cidade
+  cityId      String?
+  city        City?    @relation(fields: [cityId], references: [id])
+  cityName    String   // mantém o nome textual (útil para busca/legado)
   school      String?
-  category    String?   // ex: "Bonecas", "Carrinhos" etc.
-  wantedGift  String?   // "presente desejado"
+  category    String?
+  wantedGift  String?
   photoUrl    String?
+  photoKey    String?
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
 
   sponsorships Sponsorship[]
+  media       ChildCampaignMedia[]
 }
 
 model Sponsorship {
-  id        String              @id @default(cuid())
-  childId   String
-  sponsorId String              // User.id (quem apadrinha)
-  status    SponsorshipStatus   @default(PENDING)
-  startDate DateTime?           // quando ativou
-  endDate   DateTime?
-  note      String?
+  id         String            @id @default(cuid())
+  childId    String
+  sponsorId  String
+  campaignId String
+  status     SponsorshipStatus @default(PENDING)
+  startDate  DateTime?
+  endDate    DateTime?
+  note       String?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  child     Child   @relation(fields: [childId], references: [id])
-  sponsor   User    @relation(fields: [sponsorId], references: [id])
+  child     Child    @relation(fields: [childId], references: [id])
+  sponsor   User     @relation(fields: [sponsorId], references: [id])
+  campaign  Campaign @relation(fields: [campaignId], references: [id])
 
   @@index([childId])
   @@index([sponsorId])
-  @@index([status])
+  @@index([campaignId])
+  @@unique([childId, campaignId])
+}
+
+model ChildCampaignMedia {
+  id           String   @id @default(cuid())
+  childId      String
+  campaignId   String
+  originalKey  String?
+  originalUrl  String?
+  processedKey String?
+  processedUrl String?
+  framedKey    String?
+  framedUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  child    Child    @relation(fields: [childId], references: [id])
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@unique([childId, campaignId])
+  @@index([campaignId])
+  @@index([childId])
 }
