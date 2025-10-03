@@ -8,6 +8,8 @@ import { ProfilesModule } from './profiles/profiles.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { StorageModule } from './common/storage/storage.module';
 import { CitiesModule } from './cities/cities.module';
+import { PlacesModule } from './places/places.module';
+import { ChildImagesModule } from './child-images/child-images.module';
 
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
@@ -31,7 +33,9 @@ import { join } from 'path';
     ProfilesModule, 
     CampaignsModule,
     StorageModule,
-    CitiesModule 
+    CitiesModule,
+    PlacesModule,
+    ChildImagesModule
   ],
 })
 export class AppModule {}

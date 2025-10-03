@@ -65,58 +65,99 @@ model Profile {
 }
 
 model Campaign {
-  id          String         @id @default(cuid())
-  publicId    Int?           @unique      // <— opcional: ID inteiro da campanha (para pasta)
-  name        String
-  slug        String         @unique
-  year        Int?
-  description String?
-  startDate   DateTime?
-  endDate     DateTime?
+  id             String          @id @default(cuid())
+  publicId    Int?           @unique // <— opcional: ID inteiro da campanha (para pasta)
+  name           String
+  slug           String          @unique
+  year           Int?
+  description    String?
+  startDate      DateTime?
+  endDate        DateTime?
   status      CampaignStatus @default(DRAFT)
-  frameKey    String?
-  frameUrl    String?
-  frameConfig Json?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+
+  // retrocompat (se já existe)
+  frameKey       String?
+  frameUrl       String?
+  frameConfig    Json?
+
+  // novo: atalho para o layout ativo
+  activeFrameId  String?
+  activeFrame    CampaignFrame?  @relation("CampaignActiveFrame", fields: [activeFrameId], references: [id])
+
+  frames         CampaignFrame[] // lista de layouts
 
   sponsorships Sponsorship[]
-  media       ChildCampaignMedia[]
+  media        ChildCampaignMedia[]
+  images ChildImage[]
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model CampaignFrame {
+  id          String    @id @default(cuid())
+  campaignId  String
+  campaign    Campaign  @relation(fields: [campaignId], references: [id])
+
+  // metadados do arquivo do layout
+  key         String
+  url         String
+  mime        String
+  width       Int?
+  height      Int?
+
+  // nome amigável para escolher no site
+  name        String?   // ex.: "Capa padrão", "Versão natal 2"
+
+  // configurações de composição (overlay) para este layout
+  config      Json?     // ex.: { width:1080, height:1350, fit:'cover', gravity:'center', cornerRadius:0 }
+
+  // status/ordenação
+  active      Boolean   @default(false)
+  sort        Int       @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([campaignId, active])
+  Campaign Campaign[] @relation("CampaignActiveFrame")
 }
 
 model City {
   id        String   @id @default(cuid())
-  publicId  Int      @unique           // <— ID inteiro da cidade (para pasta)
+  publicId  Int      @unique // <— ID inteiro da cidade (para pasta)
   name      String
-  state     String?                  // "MG", etc.
+  state     String? // "MG", etc.
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  children  Child[]
+  children Child[]
 }
 
 model Child {
-  id          String   @id @default(cuid())
-  publicId    Int      @unique        // <— ID inteiro simples da criança (para pasta)
+  id          String    @id @default(cuid())
+  publicId    Int       @unique // <— ID inteiro simples da criança (para pasta)
   name        String
   birthDate   DateTime?
   age         Int?
   // Relacionamento com cidade
   cityId      String?
-  city        City?    @relation(fields: [cityId], references: [id])
-  cityName    String   // mantém o nome textual (útil para busca/legado)
+  city        City?     @relation(fields: [cityId], references: [id])
+  cityName    String // mantém o nome textual (útil para busca/legado)
   school      String?
   category    String?
   wantedGift  String?
   photoUrl    String?
   photoKey    String?
   description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
   sponsorships Sponsorship[]
-  media       ChildCampaignMedia[]
+  media        ChildCampaignMedia[]
+
+  images ChildImage[]
 }
 
 model Sponsorship {
@@ -131,14 +172,14 @@ model Sponsorship {
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
-  child     Child    @relation(fields: [childId], references: [id])
-  sponsor   User     @relation(fields: [sponsorId], references: [id])
-  campaign  Campaign @relation(fields: [campaignId], references: [id])
+  child    Child    @relation(fields: [childId], references: [id])
+  sponsor  User     @relation(fields: [sponsorId], references: [id])
+  campaign Campaign @relation(fields: [campaignId], references: [id])
 
+  @@unique([childId, campaignId])
   @@index([childId])
   @@index([sponsorId])
   @@index([campaignId])
-  @@unique([childId, campaignId])
 }
 
 model ChildCampaignMedia {
@@ -160,4 +201,56 @@ model ChildCampaignMedia {
   @@unique([childId, campaignId])
   @@index([campaignId])
   @@index([childId])
+}
+
+enum ChildImageStatus {
+  ORIGINAL_UPLOADED // original recebido e salvo
+  PROCESSED // gerou .webp (sem layout)
+  COMPOSED // gerou com layout (framed)
+  ERROR // falha em algum passo
+}
+
+model ChildImage {
+  id      String @id @default(cuid())
+  childId String
+  child   Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  // Opcional: amarração à campanha (p/ layout/coleções)
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id])
+
+  // Arquivo original recebido (obrigatório)
+  originalKey String
+  originalUrl String
+
+  // Arquivo processado em .webp (sem layout)
+  processedKey String?
+  processedUrl String?
+
+  // Arquivo final com layout (overlay)
+  framedKey String?
+  framedUrl String?
+
+  // Qual layout foi usado (snapshot para rastreabilidade)
+  layoutKey String?
+  layoutUrl String?
+
+  // Configuração usada para compor (crop/enquadramento etc.)
+  // Ex.: { width:1080, height:1350, fit:"cover", gravity:"center", cornerRadius:0 }
+  composeConfig Json?
+
+  // Snapshot da config do frame na campanha (se existir)
+  frameConfig Json?
+
+  // Metadados úteis
+  width  Int?
+  height Int?
+  status ChildImageStatus @default(ORIGINAL_UPLOADED)
+  notes  String?
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([childId, campaignId])
 }
