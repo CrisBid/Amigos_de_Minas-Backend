@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
@@ -71,6 +71,20 @@ export class ProfilesService {
   // (opcionais para admins, caso queira)
   async getByUserId(adminUserId: string, targetUserId: string) {
     // aqui você poderia validar roles antes (no controller com guard)
-    return this.prisma.profile.findUnique({ where: { userId: targetUserId } });
+    return this.prisma.profile.findUnique({ where: { id: targetUserId } });
+  }
+
+  async getUserWithProfile(targetUserId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      include: {
+        profile: true,
+        // inclua o que mais fizer sentido:
+        // sponsorships: { select: { id: true, status: true, campaignId: true, createdAt: true } },
+      },
+    });
+
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    return user;
   }
 }

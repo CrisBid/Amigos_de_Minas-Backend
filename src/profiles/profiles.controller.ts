@@ -36,6 +36,6 @@ export class ProfilesController {
   @Roles('ADMIN', 'STAFF')
   @Get(':userId')
   async getByUserId(@Param('userId') userId: string) {
-    return this.service.getByUserId(userId, userId);
+    return this.service.getUserWithProfile(userId);
   }
 }
