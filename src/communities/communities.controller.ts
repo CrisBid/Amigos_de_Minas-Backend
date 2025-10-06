@@ -13,7 +13,17 @@ export class CommunitiesController {
 
   @Get()
   list(@Query() query: QueryCommunitiesDto) {
-    return this.service.findMany(query);
+    // se vier page/pageSize, converte para skip/take
+    const take = query.pageSize ?? query.take ?? 20;
+    const skip = query.page ? (query.page - 1) * take : (query.skip ?? 0);
+
+    return this.service.findMany({
+      cityId: query.cityId,
+      q: query.q,
+      skip,
+      take,
+      includeDeleted: query.includeDeleted ?? false,
+    } as QueryCommunitiesDto);
   }
 
   @Get(':id')

@@ -16,16 +16,6 @@ async function writeIfNotExists(absPath, content) {
 }
 
 // ==== Utils ====
-function parseBR(s) {
-  const [d, m, y] = s.split('/');
-  return new Date(Number(y), Number(m) - 1, Number(d));
-}
-function yearsDiff(from, to = new Date()) {
-  let age = to.getFullYear() - from.getFullYear();
-  const m = to.getMonth() - from.getMonth();
-  if (m < 0 || (m === 0 && to.getDate() < from.getDate())) age--;
-  return age;
-}
 function toTitle(s) {
   return s
     .toLowerCase()
@@ -34,28 +24,135 @@ function toTitle(s) {
     .join(' ')
     .replace(/\b(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/g, m => m.toUpperCase());
 }
-function normalizeGift(x) {
-  if (!x) return null;
-  const s = x.trim();
-  if (/^tênis/i.test(s)) return s;                  // mantém numeração/cor
-  if (/material escolar/i.test(s)) return 'Material Escolar';
-  if (/roupa/i.test(s)) return 'Roupas';
-  if (/boneca/i.test(s)) return 'Boneca Bebê';
-  if (/carreta/i.test(s)) return 'Carreta';
-  if (/vestido/i.test(s)) return s;
-  return toTitle(s);
-}
-const SCHOOL = 'Escola Municipal de Galho São Domingos';
-const CAMPAIGN_PHOTO_KEY = (publicId) => `uploads/campaigns/2025/1101/${publicId}`;
+const slugify = (s) =>
+  s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+   .toLowerCase().trim()
+   .replace(/[^a-z0-9]+/g, '-')
+   .replace(/^-+|-+$/g, '');
 
-// ==== Seed steps ====
+// ============== DADOS PARA PREENCHER ==============
+// Formatos aceitos:
+//
+// COMMUNITIES_BY_CITY:
+//  'Cidade': [
+//    'Nome Simples',
+//    { name: 'Nome', publicId?: 123, description?: '...' }
+//  ]
+//
+// SCHOOLS_BY_CITY:
+//  'Cidade': [
+//    'Escola Simples',
+//    { name: 'EE Bonito', publicId?: 456, address?: 'Rua X',
+//      communityName?: 'Comunidade Y' } // opcional: vincula à comunidade
+//  ]
+//
+const COMMUNITIES_BY_CITY = {
+  'São João Das Missões': [
+    'Brejo Mata Fome',
+    'Embaúbas II',
+    "Olho D'Aguão",
+    'Pedra Redonda',
+    'Riachão',
+    'Riachinho',
+    'Terra Preta',
+    'Sumaré II',
+    'Sumaré III',
+  ],
+
+  'Juvenília': [
+    'Porto Agrário',
+    'Ouro Verde',
+    'Bananeira',
+    'Monte Rei',
+    'Lageado',
+  ],
+
+  'Bonito': [
+    'Água Doce',
+    'Larga',
+    'São Domingos',
+    'Japão',
+    'Croá',
+    'Salto Do Borrachudo',
+    'Lalãozinho',
+    'Almescla',
+    'Sumidouro',
+    'Cajueiro',
+    'Barra Da Ema',
+  ],
+
+  'Itacarambi': [
+    'Beira Rio',
+    'Nossa Senhora De Fátima',
+    'Corredor Da Siriema',
+    'Abrigo',
+  ],
+
+  'Manga': [
+    'Justa II',
+  ],
+};
+
+
+const SCHOOLS_BY_CITY = {
+  // São João Das Missões
+  'São João Das Missões': [
+    // Escola compartilhada entre várias comunidades:
+    { name: 'ESCOLA EST IND BUKIMUJÚ', communityName: 'Brejo Mata Fome' },
+    { name: 'ESCOLA EST IND BUKIMUJÚ', communityName: 'Embaúbas II' },
+    { name: "ESCOLA EST IND BUKIMUJÚ", communityName: "Olho D'Aguão" },
+    { name: 'ESCOLA EST IND BUKIMUJÚ', communityName: 'Pedra Redonda' },
+    { name: 'ESCOLA EST IND BUKIMUJÚ', communityName: 'Riachão' },
+    { name: 'ESCOLA EST IND BUKIMUJÚ', communityName: 'Riachinho' },
+    { name: 'ESCOLA EST IND BUKIMUJÚ', communityName: 'Terra Preta' },
+
+    // Outras comunidades com outra escola:
+    { name: 'ESCOLA EST IND KUIRO PTE', communityName: 'Sumaré II' },
+    { name: 'ESCOLA EST IND KUIRO PTE', communityName: 'Sumaré III' },
+  ],
+
+  // Juvenília
+  'Juvenília': [
+    { name: 'ESCOLA MUNICIPAL MARIA FERREIRA MARINHO', communityName: 'Bananeira' },
+    { name: 'PRÉ ESCOLAR MUNICIPAL MONTE REI',          communityName: 'Monte Rei' },
+    { name: 'ESCOLA MUNICIPAL NESTOR MESQUITA MARTINS FILHO', communityName: 'Lageado' },
+    // Porto Agrário e Ouro Verde sem escola informada (mantidos apenas nas comunidades)
+  ],
+
+  // Bonito
+  'Bonito': [
+    { name: 'ESCOLA DA BARRA DA EMA', communityName: 'Barra Da Ema' },
+    { name: 'ESCOLA MUNICIPAL DO CAJUEIRO', communityName: 'Cajueiro' },
+    { name: 'ESCOLA MUNICIPAL DE SUMIDOURO', communityName: 'Sumidouro' },
+
+    { name: 'ESCOLA MUNICIPAL LOURENÇO ALVES DA ROCHA', communityName: 'Almescla' },
+    { name: 'ESCOLA MUNICIPAL ELZITA GASPARINO PIMENTA', communityName: 'Lalãozinho' },
+    { name: 'ESCOLA MUNICIPAL ELZITA GASPARINO PIMENTA – TV SALTO', communityName: 'Salto Do Borrachudo' },
+    { name: 'ESCOLA MUNICIPAL GALHO DE SÃO DOMINGOS – TV CROÁ', communityName: 'Croá' },
+    { name: 'ESCOLA MUNICIPAL GALHO DE SÃO DOMINGOS – ASSENTAMENTO INCRA', communityName: 'Japão' },
+    { name: 'ESCOLA MUNICIPAL GALHO DE SÃO DOMINGOS', communityName: 'São Domingos' },
+    { name: 'ESCOLA MUNICIPAL FRANCISCO BORGES MONTEIRO', communityName: 'Larga' },
+    { name: 'ESCOLA MUNICIPAL FRANCISCO BORGES MONTEIRO', communityName: 'Água Doce' },
+  ],
+
+  // Itacarambi (sem escolas informadas específicas)
+  'Itacarambi': [
+    // Adicione aqui quando tiver os nomes
+  ],
+
+  // Manga
+  'Manga': [
+    { name: 'CENTRO PETER PAM', communityName: 'Justa II' },
+    { name: 'ESCOLA MAMÉDIO PEREIRA', communityName: 'Justa II' },
+  ],
+};
+
+
+// ============== STEPS BÁSICOS (USERS / CAMPANHAS / CIDADES) ==============
 async function upsertUsers() {
   const users = [
-    { name: 'Admin',        email: 'admin@amigosdeminas.org',   password: 'Admin@123',   roles: ['ADMIN'] },
-    { name: 'Equipe',       email: 'staff@amigosdeminas.org',   password: 'Staff@123',   roles: ['STAFF'] },
-    { name: 'Padrinho Demo',email: 'sponsor@amigosdeminas.org', password: 'Sponsor@123', roles: ['SPONSOR'] },
+    { name: 'Admin', email: 'admin@amigosdeminas.org', password: 'Admin@123', roles: ['ADMIN'] },
   ];
-
   const created = [];
   for (const u of users) {
     const passwordHash = await bcrypt.hash(u.password, 10);
@@ -66,17 +163,6 @@ async function upsertUsers() {
     });
     created.push(user);
   }
-
-  // perfil do padrinho demo
-  const sponsor = created.find(u => u.email === 'sponsor@amigosdeminas.org');
-  if (sponsor) {
-    await prisma.profile.upsert({
-      where: { userId: sponsor.id },
-      update: { phone: '(31) 98888-7777', city: 'Montes Claros' },
-      create: { userId: sponsor.id, phone: '(31) 98888-7777', city: 'Montes Claros' },
-    });
-  }
-
   return created;
 }
 
@@ -91,7 +177,6 @@ async function upsertCampaigns() {
       frameConfig: { width: 1080, height: 1080, fit: 'cover', gravity: 'center', cornerRadius: 24 },
     },
   ];
-
   const out = [];
   for (const c of campaigns) {
     const campaign = await prisma.campaign.upsert({
@@ -109,13 +194,12 @@ async function upsertCampaigns() {
 }
 
 async function upsertCities() {
-  // Não fixa id de Bonito; usa upsert por publicId/nome
   const cities = [
-    { publicId: 1101, name: 'Bonito',                 state: 'MG' },
-    { publicId: 1102, name: 'Itacarambi',             state: 'MG' },
-    { publicId: 1103, name: 'Juvenília',              state: 'MG' },
-    { publicId: 1104, name: 'Manga',                  state: 'MG' },
-    { publicId: 1105, name: 'São João Das Missões',   state: 'MG' },
+    { publicId: 1101, name: 'Bonito',               state: 'MG' },
+    { publicId: 1102, name: 'Itacarambi',           state: 'MG' },
+    { publicId: 1103, name: 'Juvenília',            state: 'MG' },
+    { publicId: 1104, name: 'Manga',                state: 'MG' },
+    { publicId: 1105, name: 'São João Das Missões', state: 'MG' },
   ];
 
   const out = [];
@@ -136,115 +220,98 @@ function pickCityByName(cities, name) {
   return c;
 }
 
-async function upsertChildren(cities) {
-  // Dados reais (print): todos de Bonito + escola Galho São Domingos
-  const rows = [
-    // Topo
-    //{ publicId: 2177, name: 'TAMIRES CARNEIRO RIBEIRO',           birth: '13/05/2005', wantedGift: 'Roupas',                 category: 'Roupas' },
-    //{ publicId: 2178, name: 'FABRÍCIO PEREIRA VIANA',              birth: '08/07/2015', wantedGift: 'Tênis (37/38)',          category: 'Tênis' },
-    //{ publicId: 2149, name: 'ARTHUR CARNEIRO KIRICH FERNANDES',    birth: '24/03/2016', wantedGift: 'Carreta',                category: 'Carrinhos' },
+// ============== COMUNIDADES ==============
+async function upsertCommunities(cities) {
+  const createdOrUpdated = [];
+  for (const [cityName, entries] of Object.entries(COMMUNITIES_BY_CITY)) {
+    const city = pickCityByName(cities, cityName);
+    if (!Array.isArray(entries) || entries.length === 0) continue;
 
-    // Turma 5º ano (Professora: Rita de Cássia)
-    { publicId: 2150, name: 'HELLEM BARBOSA LEITE',                birth: '06/01/2015', wantedGift: 'Roupas',                 category: 'Roupas' },
-    { publicId: 2151, name: 'HENRIQUE BARBOSA SANTANA',            birth: '27/11/2014', wantedGift: 'Tênis (35/36)',          category: 'Tênis' },
-    { publicId: 2152, name: 'ISTHELLA APARECIDA PEREIRA SANTOS',   birth: '16/05/2014', wantedGift: 'Roupas',                 category: 'Roupas' },
-    { publicId: 2153, name: 'IVAN BARBOSA SANTANA',                 birth: '29/03/2015', wantedGift: 'Material Escolar',       category: 'Material Escolar' },
-    { publicId: 2154, name: 'TIAGO BARBOSA DOS SANTOS',            birth: '16/05/2014', wantedGift: 'Material Escolar',       category: 'Material Escolar' },
-    { publicId: 2155, name: 'ESTER RIBEIRO DE SENA',               birth: '26/01/2022', wantedGift: 'Boneca Bebê',            category: 'Bonecas' },
-    { publicId: 2156, name: 'ELIZA NOGUEIRA SANTANA',              birth: '03/06/2017', wantedGift: 'Tênis Rosa (27/28)',     category: 'Tênis' },
-    { publicId: 2157, name: 'MANUELA NOGUEIRA DE ALMEIDA SANTANA', birth: '03/11/2023', wantedGift: 'Vestido (Rosa)',         category: 'Roupas' },
-  ];
+    for (const entry of entries) {
+      const nameRaw = typeof entry === 'string' ? entry : entry.name;
+      const name = toTitle(nameRaw);
+      const publicId = typeof entry === 'object' ? entry.publicId : undefined;
+      const description = typeof entry === 'object' ? entry.description : undefined;
+      const slug = slugify(name);
 
-  const city = pickCityByName(cities, 'Bonito');
-  const out = [];
-
-  for (const r of rows) {
-    const birthDate = parseBR(r.birth);
-    const age = yearsDiff(birthDate);
-
-    const child = await prisma.child.upsert({
-      where: { publicId: r.publicId },
-      update: {
-        name: toTitle(r.name),
-        birthDate,
-        age,
-        cityId: city.id,
-        cityName: city.name,
-        school: SCHOOL,
-        category: r.category || null,
-        wantedGift: normalizeGift(r.wantedGift),
-        photoKey: CAMPAIGN_PHOTO_KEY(r.publicId),
-        photoUrl: API_PUBLIC_URL + CAMPAIGN_PHOTO_KEY(r.publicId) + "/" + "original.jpg",
-        description: null,
-        deletedAt: null,
-      },
-      create: {
-        publicId: r.publicId,
-        name: toTitle(r.name),
-        birthDate,
-        age,
-        cityId: city.id,
-        cityName: city.name,
-        school: SCHOOL,
-        category: r.category || null,
-        wantedGift: normalizeGift(r.wantedGift),
-        photoKey: CAMPAIGN_PHOTO_KEY(r.publicId),
-        photoUrl: API_PUBLIC_URL + CAMPAIGN_PHOTO_KEY(r.publicId) + "/" + "original.jpg",
-        description: null,
-      },
-    });
-    out.push(child);
-  }
-  return out;
-}
-
-async function createSomeSponsorships(campaigns, users, children) {
-  const sponsor = users.find(u => u.email === 'sponsor@amigosdeminas.org');
-  const natal = campaigns.find(c => c.slug === 'natal-2025');
-  if (!sponsor || !natal) return;
-
-  // escolhe algumas crianças pelo publicId
-  const targetPublicIds = [2149, 2153, 2177];
-  for (const pid of targetPublicIds) {
-    const child = children.find(c => c.publicId === pid);
-    if (!child) continue;
-    await prisma.sponsorship.upsert({
-      where: { childId_campaignId: { childId: child.id, campaignId: natal.id } },
-      update: { status: 'ACTIVE' },
-      create: { childId: child.id, campaignId: natal.id, sponsorId: sponsor.id, status: 'ACTIVE' },
-    });
-  }
-}
-
-async function scaffoldFolders(campaigns, cities, children) {
-  // uploads/campaigns/<campPublicId>/<cityPublicId>/<childPublicId>/
-  const baseAbs = path.join(process.cwd(), UPLOAD_DIR);
-  for (const camp of campaigns) {
-    const campFolder = String(camp.publicId || camp.id);
-    for (const city of cities) {
-      const cityFolder = String(city.publicId || city.id);
-      const kids = children.filter(c => c.cityId === city.id);
-      for (const kid of kids) {
-        const dir = path.join(baseAbs, 'campaigns', campFolder, cityFolder, String(kid.publicId));
-        await ensureDir(dir);
-        const readmePath = path.join(dir, 'README.txt');
-        const note = `Cole aqui a foto original desta criança:
-
-- Nome: ${kid.name}
-- childPublicId: ${kid.publicId}
-- Cidade: ${city.name} (${city.publicId})
-- Campanha: ${camp.name} (${camp.publicId || camp.id})
-
-Arquivos aceitos: original.jpg | original.png | original.webp
-Após colar, acesse o front com ?scan=1 ou use POST /children/:childId/photo?campaignId=${camp.id}.`;
-        await writeIfNotExists(readmePath, note);
+      let community;
+      if (publicId) {
+        // publicId é único
+        community = await prisma.community.upsert({
+          where: { publicId },
+          update: { name, slug, description, cityId: city.id },
+          create: { publicId, name, slug, description, cityId: city.id },
+        });
+      } else {
+        // usa unique composto @@unique([cityId, name]) -> where: { cityId_name: { ... } }
+        community = await prisma.community.upsert({
+          where: { cityId_name: { cityId: city.id, name } },
+          update: { slug, description },
+          create: { cityId: city.id, name, slug, description },
+        });
       }
+      createdOrUpdated.push(community);
     }
   }
-  console.log(`✔ Pastas criadas (se necessário) dentro de ${path.relative(process.cwd(), baseAbs)}`);
+  return createdOrUpdated;
 }
 
-// ==== Runner ====
+// ============== ESCOLAS (com vínculo opcional à Comunidade) ==============
+async function upsertSchools(cities) {
+  const createdOrUpdated = [];
+
+  for (const [cityName, entries] of Object.entries(SCHOOLS_BY_CITY)) {
+    const city = pickCityByName(cities, cityName);
+    if (!Array.isArray(entries) || entries.length === 0) continue;
+
+    for (const entry of entries) {
+      const isObj = typeof entry === 'object';
+      const name = toTitle(isObj ? entry.name : entry);
+      const publicId = isObj ? entry.publicId : undefined;
+      const address = isObj ? entry.address : undefined;
+      const communityName = isObj ? entry.communityName : undefined;
+      const slug = slugify(name);
+
+      // Se foi passado communityName, tenta achar a comunidade na mesma cidade
+      let community = null;
+      if (communityName) {
+        community = await prisma.community.findUnique({
+          where: { cityId_name: { cityId: city.id, name: toTitle(communityName) } },
+          select: { id: true },
+        });
+        if (!community) {
+          // Se quiser criar automaticamente a comunidade caso não exista, descomente:
+          // community = await prisma.community.create({
+          //   data: { cityId: city.id, name: toTitle(communityName), slug: slugify(communityName) },
+          // });
+          // Ou mantém null silenciosamente:
+          console.warn(`⚠️ Comunidade "${communityName}" não encontrada em ${cityName}; escola "${name}" ficará sem vínculo de comunidade.`);
+        }
+      }
+
+      let school;
+      if (publicId) {
+        school = await prisma.school.upsert({
+          where: { publicId },
+          update: { name, slug, address, cityId: city.id, communityId: community?.id ?? null },
+          create: { publicId, name, slug, address, cityId: city.id, communityId: community?.id ?? null },
+        });
+      } else {
+        // unique composto @@unique([cityId, name])
+        school = await prisma.school.upsert({
+          where: { cityId_name: { cityId: city.id, name } },
+          update: { slug, address, communityId: community?.id ?? null },
+          create: { cityId: city.id, name, slug, address, communityId: community?.id ?? null },
+        });
+      }
+      createdOrUpdated.push(school);
+    }
+  }
+
+  return createdOrUpdated;
+}
+
+// ============== RUNNER ==============
 async function main() {
   console.log('🌱 Seeding…');
 
@@ -254,16 +321,18 @@ async function main() {
     upsertCities(),
   ]);
 
-  const children = await upsertChildren(cities);
-  await createSomeSponsorships(campaigns, users, children);
-  await scaffoldFolders(campaigns, cities, children);
+  const [communities, schools] = await Promise.all([
+    upsertCommunities(cities),
+    upsertSchools(cities),
+  ]);
 
   console.log('✅ Seed finalizado.');
   console.log('   - Usuários: admin@amigosdeminas.org / Admin@123');
-  console.log('               staff@amigosdeminas.org / Staff@123');
-  console.log('               sponsor@amigosdeminas.org / Sponsor@123');
-  console.log('   - Campanhas (slug):', campaigns.map(c => c.slug).join(', '));
-  console.log(`   - Estrutura de uploads em: ${path.join(process.cwd(), UPLOAD_DIR)}`);
+  console.log('   - Campanhas:', campaigns.map(c => c.slug).join(', '));
+  console.log('   - Cidades:', cities.map(c => `${c.name}/${c.state ?? ''}`).join(', '));
+  console.log(`   - Comunidades criadas/atualizadas: ${communities.length}`);
+  console.log(`   - Escolas criadas/atualizadas: ${schools.length}`);
+  console.log(`   - Uploads em: ${path.join(process.cwd(), UPLOAD_DIR)}`);
 }
 
 main()

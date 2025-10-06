@@ -13,7 +13,17 @@ export class SchoolsController {
 
   @Get()
   list(@Query() query: QuerySchoolsDto) {
-    return this.service.findMany(query);
+    const take = query.pageSize ?? query.take ?? 20;
+    const skip = query.page ? (query.page - 1) * take : (query.skip ?? 0);
+
+    return this.service.findMany({
+      cityId: query.cityId,
+      communityId: query.communityId,
+      q: query.q,
+      includeDeleted: query.includeDeleted ?? false,
+      skip,
+      take,
+    } as QuerySchoolsDto);
   }
 
   @Get(':id')

@@ -20,30 +20,32 @@ export class CommunitiesService {
   }
 
     async findMany(query: QueryCommunitiesDto) {
-    const where: Prisma.CommunityWhereInput = {
-        cityId: query.cityId,
-        name: query.q
-        ? { contains: query.q, mode: Prisma.QueryMode.insensitive } // ⬅️ aqui
-        : undefined,
-        deletedAt: query.includeDeleted ? undefined : null,
-    };
+      const take = query.take ?? 20;
+      const skip = query.skip ?? 0;
 
-    const [items, total] = await this.prisma.$transaction([
+      const where: Prisma.CommunityWhereInput = {
+        cityId: query.cityId,
+        name: query.q ? { contains: query.q, mode: Prisma.QueryMode.insensitive } : undefined,
+        deletedAt: query.includeDeleted ? undefined : null,
+      };
+
+      const [items, total] = await this.prisma.$transaction([
         this.prisma.community.findMany({
-        where,
-        skip: query.skip ?? 0,
-        take: query.take ?? 20,
-        orderBy: [{ name: 'asc' }],
-        include: {
+          where,
+          skip,
+          take,
+          orderBy: [{ name: 'asc' }],
+          include: {
             _count: { select: { schools: true, children: true } },
             city: { select: { id: true, name: true, state: true } },
-        },
+          },
         }),
         this.prisma.community.count({ where }),
-    ]);
+      ]);
 
-    return { items, total };
+      return { items, total };
     }
+
 
   async findOne(id: string) {
     const item = await this.prisma.community.findFirst({

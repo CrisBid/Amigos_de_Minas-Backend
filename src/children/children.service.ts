@@ -19,16 +19,18 @@ export class ChildrenService {
       orderBy: { createdAt: 'desc' },
       include: {
         city: true,
+        community: true,
+        school: true,
 
         sponsorships: campaignId
           ? {
-              where: { campaignId, status: { in: ['ACTIVE', 'PENDING'] } },
+              where: { campaignId, status: { in: ['COMPLETED', 'PENDING'] } },
               select: { id: true, status: true, campaignId: true, createdAt: true },
               orderBy: { createdAt: 'desc' },
               take: 1,
             }
           : {
-              where: { status: { in: ['ACTIVE', 'PENDING'] } },
+              where: { status: { in: ['COMPLETED', 'PENDING'] } },
               select: { id: true, status: true, campaignId: true, createdAt: true },
               orderBy: { createdAt: 'desc' },
               take: 1,
@@ -87,7 +89,16 @@ export class ChildrenService {
 
 
   get(id: string) {
-    return this.prisma.child.findUnique({ where: { id } });
+    return this.prisma.child.findUnique({ 
+      where: { id },
+      include: {
+        city: true,
+        community: true,
+        school: true,
+        sponsorships: true,
+        images: true,
+      }
+    });
   }
 
   create(dto: any) { return this.prisma.child.create({ data: dto }); }

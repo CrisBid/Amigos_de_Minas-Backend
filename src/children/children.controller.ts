@@ -174,6 +174,7 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
     @Query('campaignId') campaignId?: string,
     // >>> layoutId via @Query (em vez de req.query)
     @Query('layoutId') layoutId?: string,
+    @Body() body?: any,
     @UploadedFile() file?: Express.Multer.File,
   ) {
     if (!file) throw new BadRequestException('Arquivo ausente');
@@ -225,7 +226,16 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
     }
 
     // cria registro usando o service (salva original, processed e framed)
+    // recuperar e parsear o JSON de composição enviado como campo "Config"
+    let composeConfig: any = undefined;
+    try {
+      if (body?.Config) composeConfig = JSON.parse(body.Config);
+    } catch {
+      // se vier inválido, ignore
+    }
+
     const imgRecord = await this.childImages.createFromUpload({
+      
       childId: child.id,
       childPublicId: child.publicId,
       campaign: {
@@ -239,7 +249,7 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
       cityFolder,
       file: { buffer: file.buffer, mime: file.mimetype },
       // se quiser fixar dimensões/enquadramento padrão, defina compose:
-      // compose: { width: 1080, height: 1350, fit: 'cover', gravity: 'center', cornerRadius: 0 },
+      compose: composeConfig,
     });
 
     // (opcional) definir a "foto principal" da criança a partir do composed
@@ -273,6 +283,20 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
     const city = await this.prisma.city.findUnique({ where: { id: context.cityId } });
     if (!city) throw new BadRequestException('Cidade não encontrada');
 
+    if (context.communityId) {
+      const exists = await this.prisma.community.findUnique({ where: { id: context.communityId } });
+      if (!exists) throw new BadRequestException('Comunidade não encontrada');
+    }
+    if (context.schoolId) {
+      const exists = await this.prisma.school.findUnique({ where: { id: context.schoolId } });
+      if (!exists) throw new BadRequestException('Escola não encontrada');
+    }
+    // (opcional) validar campanha, se vier
+    if (context.campaignId) {
+      const exists = await this.prisma.campaign.findUnique({ where: { id: context.campaignId } });
+      if (!exists) throw new BadRequestException('Campanha não encontrada');
+    }
+
     const created: number[] = [];
     const updated: number[] = [];
 
@@ -283,7 +307,7 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
         throw new BadRequestException(`publicId inválido: ${c.publicId}`);
       }
 
-      const data = {
+      const data:any = {
         publicId: pid,
         name: c.name.trim(),
         // birthDate ISO (YYYY-MM-DD) -> Date
@@ -295,6 +319,9 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
         cityId: city.id,
         cityName: city.name, // importantíssimo p/ seu schema
       };
+
+      if (context.communityId) data.communityId = context.communityId;
+      if (context.schoolId)    data.schoolId = context.schoolId;
 
       const exists = await this.prisma.child.findUnique({ where: { publicId: pid } });
 
@@ -308,6 +335,31 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
         await this.prisma.child.create({ data });
         created.push(pid);
       }
+      // (opcional) se sua modelagem usa tabelas-ponte N:N, em vez de FKs diretas:
+      /*
+      if (context.communityId) {
+        await this.prisma.childCommunity.upsert({
+          where: { childId_communityId: { childId: exists?.id ?? (await this.prisma.child.findUnique({ where: { publicId: pid } }))!.id, communityId: context.communityId } },
+          create: { childId: (await this.prisma.child.findUnique({ where: { publicId: pid } }))!.id, communityId: context.communityId },
+          update: {},
+        });
+      }
+      if (context.schoolId) {
+        await this.prisma.childSchool.upsert({
+          where: { childId_schoolId: { childId: ..., schoolId: context.schoolId } },
+          create: { childId: ..., schoolId: context.schoolId },
+          update: {},
+        });
+      }
+
+      //(opcional) garanta o vínculo com a campanha (N:N) se existir a relação child<->campaign
+      if (context.campaignId) {
+        await this.prisma.child.update({
+          where: { publicId: pid },
+          data: { campaigns: { connect: { id: context.campaignId } } },
+        });
+      }
+      */
     }
 
     return { created, updated };

@@ -22,7 +22,8 @@ enum Role {
 
 enum SponsorshipStatus {
   PENDING
-  ACTIVE
+  COMPLETED
+  IN_PROGRESS
   ENDED
   CANCELLED
 }

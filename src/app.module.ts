@@ -8,11 +8,12 @@ import { ProfilesModule } from './profiles/profiles.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { StorageModule } from './common/storage/storage.module';
 import { CitiesModule } from './cities/cities.module';
-import { PlacesModule } from './places/places.module';
 import { ChildImagesModule } from './child-images/child-images.module';
 
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { CommunitiesModule } from './communities/communities.module';
+import { SchoolsModule } from './schools/schools.module';
 
 @Module({
   imports: [
@@ -34,7 +35,8 @@ import { join } from 'path';
     CampaignsModule,
     StorageModule,
     CitiesModule,
-    PlacesModule,
+    CommunitiesModule,
+    SchoolsModule,
     ChildImagesModule
   ],
 })

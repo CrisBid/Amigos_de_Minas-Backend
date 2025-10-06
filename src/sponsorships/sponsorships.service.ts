@@ -40,7 +40,7 @@ export class SponsorshipsService {
   async activate(id: string) {
     return this.prisma.sponsorship.update({
       where: { id },
-      data: { status: 'ACTIVE', startDate: new Date() },
+      data: { status: 'COMPLETED', startDate: new Date() },
     });
   }
 

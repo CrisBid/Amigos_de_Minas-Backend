@@ -33,7 +33,7 @@ export class ComposeLiveService {
     return `${age} anos`;
   }
 
-  // Texto via SVG (suporta wrap, alinhamento, letter-spacing, line-height)
+  // Texto via SVG (wrap+alinhamento+letter-spacing+line-height)
   private svgTextLayer(opts: {
     text: string;
     x: number; y: number; maxWidth?: number;
@@ -88,16 +88,17 @@ export class ComposeLiveService {
 
   /**
    * Render dinâmico:
-   * - foto da criança é desenhada primeiro (fundo)
-   * - layout é sobreposto por cima (overlay)
+   * - foto da criança (fundo)
+   * - layout/overlay por cima
+   * - textos por cima
    */
   async renderChild(opts: {
     childIdOrPublic: string;
-    campaignId: string;            // pode vir da URL ou resolvido no controller
+    campaignId: string;
     layoutId?: string | null;
     format?: 'webp'|'jpeg';
     quality?: number;
-    overrideConfig?: any;          // overrides via URL
+    overrideConfig?: any;
   }) {
     const {
       childIdOrPublic, campaignId, layoutId,
@@ -131,11 +132,19 @@ export class ComposeLiveService {
     const frameUrl  = frame?.url ?? (camp as any).frameUrl ?? null;
     const frameCfg  = (frame as any)?.config ?? null;
 
-    // --- Última imagem da criança nesta campanha (contém Config)
+    // --- Última imagem da criança nesta campanha (com snapshot + config)
     const lastImg = await this.prisma.childImage.findFirst({
       where: { childId: child.id, campaignId: camp.id },
       orderBy: [{ createdAt: 'desc' }],
-      select: { originalKey: true, processedKey: true, Config: true },
+      select: {
+        originalKey: true, originalUrl: true,
+        processedKey: true, processedUrl: true,
+        framedKey: true, framedUrl: true,
+        layoutKey: true, layoutUrl: true,
+        Config: true,
+        width: true, height: true,
+        createdAt: true,
+      },
     });
 
     // Buffer base da foto (processed → original)
@@ -148,35 +157,38 @@ export class ComposeLiveService {
     }
     if (!photoBufBase) throw new Error('photo_not_found');
 
-    // --- Merge de configs: frame.config > legado (camp.frameConfig) > ChildImage.Config > override
-    const itemCfg = (lastImg as any)?.Config ?? null; // Prisma usa "Config" maiúsculo
+    // --- Merge de configs: frame.config > camp.frameConfig > ChildImage.Config > override
+    const itemCfg = (lastImg as any)?.Config ?? null;
     const cfg = this.deepMerge(
       this.deepMerge(frameCfg ?? {}, legacyCfg ?? {}),
       this.deepMerge(itemCfg ?? {}, overrideConfig ?? {}),
     );
 
-    // --- Carrega layout (overlay) e define canvas (W/H)
+    // --- Carrega layout (overlay) (frame/camp) → snapshot salvo na ChildImage (fallback)
     let layoutBuf: Buffer | null = null;
     if (frameKey || frameUrl) {
       layoutBuf = frameKey
         ? await this.storage.readBufferByKey(frameKey).catch(() => null)
         : await (await fetch(String(frameUrl))).arrayBuffer().then(b => Buffer.from(b)).catch(() => null);
     }
+    if (!layoutBuf && (lastImg?.layoutKey || lastImg?.layoutUrl)) {
+      layoutBuf = lastImg.layoutKey
+        ? await this.storage.readBufferByKey(lastImg.layoutKey).catch(() => null)
+        : await (await fetch(String(lastImg!.layoutUrl))).arrayBuffer().then(b => Buffer.from(b)).catch(() => null);
+    }
 
-    let W: number;
-    let H: number;
+    // --- Dimensões do canvas (igual ao front: canvas > layout > default 1080x1350)
+    let W: number, H: number;
     if (cfg.canvas?.width && cfg.canvas?.height) {
       W = cfg.canvas.width; H = cfg.canvas.height;
     } else if (layoutBuf) {
       const meta = await sharp(layoutBuf).metadata();
       W = meta.width || 1080; H = meta.height || 1350;
     } else {
-      // fallback de tamanho
-      W = cfg.photoRect?.width || 1080;
-      H = Math.max(cfg.photoRect?.height ?? 1350, 1350);
+      W = 1080; H = 1350;
     }
 
-    // === NOVO: base é canvas transparente (ou com cor), não o layout ===
+    // Base transparente (ou com cor)
     let base = sharp({
       create: {
         width: W,
@@ -186,7 +198,7 @@ export class ComposeLiveService {
       },
     });
 
-    // --- Preparar foto para `photoRect` (desenhada primeiro)
+    // --- FOTO (primeiro)
     const pr = cfg.photoRect || {};
     const rectW = Math.max(1, parseInt(String(pr.width ?? W), 10) || W);
     const rectH = Math.max(1, parseInt(String(pr.height ?? H), 10) || H);
@@ -199,21 +211,21 @@ export class ComposeLiveService {
     const offY = parseInt(String(pr.offsetY ?? 0), 10) || 0;
     const cornerRadius = pr.cornerRadius || 0;
 
-    // redimensiona a foto para caber no rect
+    // ajusta foto para caber no rect (mesma lógica do front)
     let photo = sharp(photoBufBase, { failOnError: false })
       .rotate()
       .resize(rectW, rectH, { fit: fit as any, position: gravity });
 
     let photoOut = await photo.webp({ quality: 92 }).toBuffer();
 
-    // aplica scale e offsets
+    // aplica scale
     if (scale !== 1.0) {
       const sw = Math.round(rectW * scale);
       const sh = Math.round(rectH * scale);
       photoOut = await sharp(photoOut).resize(sw, sh, { fit: 'cover' }).toBuffer();
     }
 
-    // cantos arredondados (máscara)
+    // cantos arredondados
     if (cornerRadius > 0) {
       const metaP = await sharp(photoOut).metadata();
       const pw = metaP.width || rectW, ph = metaP.height || rectH;
@@ -224,17 +236,15 @@ export class ComposeLiveService {
       photoOut = await sharp(photoOut).composite([{ input: mask, blend: 'dest-in' }]).toBuffer();
     }
 
-    // posicionamento final da foto dentro do rect
+    // posicionamento final no rect
     const pMeta = await sharp(photoOut).metadata();
     const placeX = rectX + Math.round((rectW - (pMeta.width || rectW)) / 2) + offX;
     const placeY = rectY + Math.round((rectH - (pMeta.height || rectH)) / 2) + offY;
 
-    // compõe a FOTO primeiro (fundo)
     base = base.composite([{ input: photoOut, left: placeX, top: placeY }]);
 
-    // --- LAYOUT por cima (overlay)
+    // --- LAYOUT (overlay por cima)
     if (layoutBuf) {
-      // redimensiona o layout para o canvas quando solicitado
       const layoutPrepared = (cfg.layout?.resizeToCanvas || (cfg.canvas?.width && cfg.canvas?.height))
         ? await sharp(layoutBuf).resize(W, H, { fit: 'fill' }).toBuffer()
         : layoutBuf;
@@ -244,7 +254,6 @@ export class ComposeLiveService {
           ? Math.max(0, Math.min(1, cfg.layout.opacity))
           : 1;
 
-      // TS: OverlayOptions na sua versão não tem 'opacity'; usamos cast para any
       const overlay: any = {
         input: layoutPrepared,
         left: 0,
@@ -252,23 +261,32 @@ export class ComposeLiveService {
         blend: 'over',
       };
       if (layoutOpacity < 1) {
-        overlay.opacity = layoutOpacity; // OK em runtime; ignora no tipo
+        overlay.opacity = layoutOpacity;
       }
 
       base = (base as any).composite([overlay]);
     }
 
+    // --- TEXTOS (por cima)
+    // carrega nomes “oficiais” via relações para bater com o front
+    const childFull = await this.prisma.child.findUnique({
+      where: { id: child.id },
+      include: {
+        city: { select: { name: true } },
+        // se não houver relação community na sua modelagem, remova esta linha
+        community: { select: { name: true } } as any,
+      },
+    });
 
-    // --- Textos (por cima). Se quiser por baixo do layout, mova este bloco antes do overlay do layout
     const texts: any[] = Array.isArray(cfg?.texts) ? cfg.texts : [];
     const age = this.computeAge(child.birthDate);
     const valueByField: Record<string, string> = {
-      name: child.name ?? '',
-      publicId: String(child.publicId ?? ''),
+      name: childFull?.name ?? child.name ?? '',
+      publicId: String(childFull?.publicId ?? child.publicId ?? ''),
       age,
-      wantedGift: child.wantedGift ?? '',
-      cityName: child.cityName ?? '',
-      communityName: (child as any).communityName ?? '',
+      wantedGift: childFull?.wantedGift ?? child.wantedGift ?? '',
+      cityName: childFull?.city?.name ?? (child as any).cityName ?? '',
+      communityName: (childFull as any)?.community?.name ?? (child as any).communityName ?? '',
     };
 
     for (const t of texts) {

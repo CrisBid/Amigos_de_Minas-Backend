@@ -21,32 +21,36 @@ export class SchoolsService {
   }
 
   async findMany(query: QuerySchoolsDto) {
+    const take = query.take ?? 20;
+    const skip = query.skip ?? 0;
+
     const where: Prisma.SchoolWhereInput = {
-        cityId: query.cityId,
-        communityId: query.communityId,
-        name: query.q
-        ? { contains: query.q, mode: Prisma.QueryMode.insensitive } // ⬅️ aqui
+      cityId: query.cityId || undefined,
+      communityId: query.communityId || undefined,
+      name: query.q
+        ? { contains: query.q, mode: Prisma.QueryMode.insensitive }
         : undefined,
-        deletedAt: query.includeDeleted ? undefined : null,
+      deletedAt: query.includeDeleted ? undefined : null,
     };
 
     const [items, total] = await this.prisma.$transaction([
-        this.prisma.school.findMany({
+      this.prisma.school.findMany({
         where,
-        skip: query.skip ?? 0,
-        take: query.take ?? 20,
+        skip,
+        take,
         orderBy: [{ name: 'asc' }],
         include: {
-            city: { select: { id: true, name: true, state: true } },
-            community: { select: { id: true, name: true } },
-            _count: { select: { children: true } },
+          city: { select: { id: true, name: true, state: true } },
+          community: { select: { id: true, name: true } },
+          _count: { select: { children: true } },
         },
-        }),
-        this.prisma.school.count({ where }),
+      }),
+      this.prisma.school.count({ where }),
     ]);
 
     return { items, total };
-    }
+  }
+
   async findOne(id: string) {
     const item = await this.prisma.school.findFirst({
       where: { id },
