@@ -20,13 +20,9 @@ export class ChildrenService {
       include: {
         city: true,
 
-        // ✅ considere PENDING também e ordene para pegar o sponsorship mais recente
         sponsorships: campaignId
           ? {
-              where: {
-                campaignId,
-                status: { in: ['ACTIVE', 'PENDING'] },
-              },
+              where: { campaignId, status: { in: ['ACTIVE', 'PENDING'] } },
               select: { id: true, status: true, campaignId: true, createdAt: true },
               orderBy: { createdAt: 'desc' },
               take: 1,
@@ -38,8 +34,8 @@ export class ChildrenService {
               take: 1,
             },
 
-        // (opcional) ordena mídia também
-        media: campaignId
+        // 🔁 trocado: media -> images
+        images: campaignId
           ? {
               where: { campaignId },
               select: { framedUrl: true, processedUrl: true, createdAt: true },
@@ -55,16 +51,17 @@ export class ChildrenService {
 
     const campaignFolder = String(campaign?.publicId ?? campaign?.id ?? '');
     for (const c of children as any[]) {
-      if (c.media && c.media.length > 0) continue;
-      if (!c.city) continue; // precisa da cidade
+      if (c.images && c.images.length > 0) continue; // 🔁 era c.media
+      if (!c.city) continue;
 
       const cityFolder = String(c.city.publicId ?? c.city.id);
-      const childFolder = c.publicId; // inteiro
-      const framedKey = `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/framed.webp`;
-      const processedKey = `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/processed.webp`;
+      const childFolder = c.publicId;
+
+      const framedKey   = `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/framed.webp`;
+      const processedKey= `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/processed.webp`;
       const originalJpg = `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/original.jpg`;
       const originalPng = `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/original.png`;
-      const originalWebp = `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/original.webp`;
+      const originalWebp= `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/original.webp`;
 
       let url: string | null = null;
       if (await this.storage.exists(framedKey)) {
@@ -80,12 +77,13 @@ export class ChildrenService {
       }
 
       if (url) {
-        c.media = [{ framedUrl: url, processedUrl: url }];
+        // 🔁 padroniza no mesmo formato que o include acima
+        c.images = [{ framedUrl: url, processedUrl: url }];
       }
     }
 
     return children;
-  }
+    }
 
 
   get(id: string) {
@@ -143,37 +141,54 @@ export class ChildrenService {
     }
 
     // 4) upsert media por campanha
-    const media = await this.prisma.childCampaignMedia.upsert({
-      where: { childId_campaignId: { childId, campaignId } },
-      create: {
-        childId, campaignId,
-        originalKey, originalUrl,
-        processedKey, processedUrl,
-        framedKey: framedKey || undefined,
-        framedUrl: framedUrl || undefined,
-      },
-      update: {
-        originalKey, originalUrl,
-        processedKey, processedUrl,
-        framedKey: framedKey || undefined,
-        framedUrl: framedUrl || undefined,
-      },
+    const existing = await this.prisma.childImage.findFirst({
+      where: { childId, campaignId },
+      orderBy: { createdAt: 'desc' }, // em caso de múltiplas, pega a mais recente
     });
 
-    return { photoUrl: media.framedUrl || media.processedUrl };
+    let rec;
+    if (!existing) {
+      rec = await this.prisma.childImage.create({
+        data: {
+          childId,
+          campaignId,
+          originalKey, originalUrl,
+          processedKey, processedUrl,
+          framedKey: framedKey || null,
+          framedUrl: framedUrl || null,
+          status: 'COMPOSED', // ou PROCESSED conforme sua lógica
+        },
+      });
+    } else {
+      rec = await this.prisma.childImage.update({
+        where: { id: existing.id },
+        data: {
+          originalKey, originalUrl,
+          processedKey, processedUrl,
+          framedKey: framedKey || null,
+          framedUrl: framedUrl || null,
+          status: 'COMPOSED',
+        },
+      });
+    }
+
+    return { photoUrl: rec.framedUrl || rec.processedUrl };
   }
 
   async deletePhotoForCampaign(childId: string, campaignId: string) {
-    const media = await this.prisma.childCampaignMedia.findUnique({
-      where: { childId_campaignId: { childId, campaignId } },
+    const media = await this.prisma.childImage.findFirst({
+      where: { childId, campaignId },
+      orderBy: { createdAt: 'desc' },
     });
     if (!media) return { ok: true };
+
     await Promise.all([
       this.storage.deleteByKey(media.originalKey || undefined),
       this.storage.deleteByKey(media.processedKey || undefined),
       this.storage.deleteByKey(media.framedKey || undefined),
-      this.prisma.childCampaignMedia.delete({ where: { childId_campaignId: { childId, campaignId } } }),
+      this.prisma.childImage.delete({ where: { id: media.id } }),
     ]);
+
     return { ok: true };
   }
 }

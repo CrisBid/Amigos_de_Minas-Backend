@@ -87,7 +87,6 @@ model Campaign {
   frames         CampaignFrame[] // lista de layouts
 
   sponsorships Sponsorship[]
-  media        ChildCampaignMedia[]
   images ChildImage[]
 
   createdAt      DateTime        @default(now())
@@ -123,28 +122,88 @@ model CampaignFrame {
   Campaign Campaign[] @relation("CampaignActiveFrame")
 }
 
+
 model City {
   id        String   @id @default(cuid())
-  publicId  Int      @unique // <— ID inteiro da cidade (para pasta)
+  publicId  Int      @unique
   name      String
-  state     String? // "MG", etc.
+  state     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  children Child[]
+  children     Child[]
+  communities  Community[]
+  schools      School[]
+
+  @@index([name, state])
+}
+
+model Community {
+  id          String   @id @default(cuid())
+  publicId    Int?     @unique
+  cityId      String
+  city        City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  name        String
+  slug        String?
+  description String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  schools     School[]
+  children    Child[]
+
+  @@unique([cityId, name])         // Evita comunidades duplicadas na mesma cidade
+  @@index([cityId, name])
+}
+
+model School {
+  id          String   @id @default(cuid())
+  publicId    Int?     @unique
+  cityId      String
+  city        City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  communityId String?
+  community   Community? @relation(fields: [communityId], references: [id], onDelete: SetNull)
+
+  name        String
+  slug        String?
+  address     String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  children    Child[]
+
+  @@unique([cityId, name])         // Nome de escola único por cidade
+  @@index([cityId, communityId, name])
 }
 
 model Child {
   id          String    @id @default(cuid())
-  publicId    Int       @unique // <— ID inteiro simples da criança (para pasta)
+  publicId    Int       @unique
   name        String
   birthDate   DateTime?
   age         Int?
-  // Relacionamento com cidade
+
+  // Cidade (como já tinha)
   cityId      String?
   city        City?     @relation(fields: [cityId], references: [id])
-  cityName    String // mantém o nome textual (útil para busca/legado)
-  school      String?
+  cityName    String
+
+  // NOVO: relacionamentos normalizados (retrocompat abaixo)
+  communityId String?
+  community   Community? @relation(fields: [communityId], references: [id])
+
+  schoolId    String?
+  school      School?    @relation(fields: [schoolId], references: [id])
+
+  // LEGADO: mantém o texto antigo para busca/compatibilidade
+  schoolLegacy String?    // <- renomeie de 'school' para 'schoolLegacy' na migração
+
   category    String?
   wantedGift  String?
   photoUrl    String?
@@ -155,9 +214,9 @@ model Child {
   deletedAt   DateTime?
 
   sponsorships Sponsorship[]
-  media        ChildCampaignMedia[]
+  images       ChildImage[]
 
-  images ChildImage[]
+  @@index([cityId, communityId, schoolId])
 }
 
 model Sponsorship {
@@ -180,27 +239,6 @@ model Sponsorship {
   @@index([childId])
   @@index([sponsorId])
   @@index([campaignId])
-}
-
-model ChildCampaignMedia {
-  id           String   @id @default(cuid())
-  childId      String
-  campaignId   String
-  originalKey  String?
-  originalUrl  String?
-  processedKey String?
-  processedUrl String?
-  framedKey    String?
-  framedUrl    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  child    Child    @relation(fields: [childId], references: [id])
-  campaign Campaign @relation(fields: [campaignId], references: [id])
-
-  @@unique([childId, campaignId])
-  @@index([campaignId])
-  @@index([childId])
 }
 
 enum ChildImageStatus {
@@ -237,10 +275,7 @@ model ChildImage {
 
   // Configuração usada para compor (crop/enquadramento etc.)
   // Ex.: { width:1080, height:1350, fit:"cover", gravity:"center", cornerRadius:0 }
-  composeConfig Json?
-
-  // Snapshot da config do frame na campanha (se existir)
-  frameConfig Json?
+  Config Json?
 
   // Metadados úteis
   width  Int?

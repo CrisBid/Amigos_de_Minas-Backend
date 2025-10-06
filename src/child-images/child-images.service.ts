@@ -80,8 +80,7 @@ export class ChildImagesService {
         framedUrl: framedUrl ?? null,
         layoutKey,
         layoutUrl,
-        composeConfig: compose ? compose as any : undefined,
-        frameConfig: campaign?.frameConfig ? campaign.frameConfig as any : undefined,
+        Config: compose ? compose as any : undefined,
         status: framedKey ? 'COMPOSED' : 'PROCESSED',
       },
     });
@@ -128,7 +127,7 @@ export class ChildImagesService {
         data: {
           framedKey: newKey,
           framedUrl: this.storage.publicUrl(newKey),
-          composeConfig: compose as any,
+          Config: compose as any,
           status: 'COMPOSED',
           version: (img.version ?? 1) + 1,
         },
@@ -138,7 +137,7 @@ export class ChildImagesService {
     // Sem layout → apenas salva composeConfig
     return this.prisma.childImage.update({
       where: { id: imageId },
-      data: { composeConfig: compose as any, version: (img.version ?? 1) + 1 },
+      data: { Config: compose as any, version: (img.version ?? 1) + 1 },
     });
   }
 

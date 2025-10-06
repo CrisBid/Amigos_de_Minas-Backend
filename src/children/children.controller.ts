@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -25,10 +26,24 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { StorageService } from '../common/storage/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkCommitDto } from './dto/bulk-commit.dto';
+import { ComposeLiveService } from 'src/child-images/compose-live.service';
+
+import type { Response } from 'express';
 
 // Se você tiver DTOs para create/update, importe aqui
 // import { CreateChildDto } from './dto/create-child.dto';
 // import { UpdateChildDto } from './dto/update-child.dto';
+
+
+// helper seguro pra JSON em query
+function parseJson<T = any>(raw?: string | null): T | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
 
 @Controller('children')
 export class ChildrenController {
@@ -38,6 +53,7 @@ export class ChildrenController {
     private storage: StorageService,
     private childImages: ChildImagesService,
     private campaignFrames: CampaignFramesService,
+    private composeLive: ComposeLiveService,
   ) {}
 
   /** Lista crianças; se enviar campaignId, o service faz o "lazy hydrate" da mídia por campanha */
@@ -72,6 +88,70 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.service.softDelete(id);
+  }
+
+  @Get(':id/render')
+  async renderChildPreview(
+    @Param('id') id: string,
+    @Res() res: Response,
+    // opcional — se não vier, resolvemos via último ChildImage
+    @Query('campaignId') campaignId?: string,
+    // opcional — força um frame específico
+    @Query('layoutId') layoutId?: string,
+    @Query('format') format: 'webp' | 'jpeg' = 'webp',
+    @Query('q') q?: string,
+    // overrides granulares
+    @Query('config') configJson?: string,
+    @Query('photoRect') photoRectJson?: string,
+    @Query('layout') layoutJson?: string,
+    @Query('texts') textsJson?: string,
+  ) {
+    const quality = Math.max(1, Math.min(parseInt(String(q ?? '88'), 10) || 88, 100));
+
+    // Descobrir campaignId, se não informado
+    let effectiveCampaignId = (campaignId ?? '').trim();
+    if (!effectiveCampaignId) {
+      // resolver criança (UUID ou publicId)
+      const nChild = parseInt(id, 10);
+      const child =
+        (await this.prisma.child.findUnique({ where: { id } })) ||
+        (Number.isFinite(nChild) ? await this.prisma.child.findFirst({ where: { publicId: nChild } }) : null);
+      if (!child) throw new NotFoundException('Criança não encontrada');
+
+      const lastImg = await this.prisma.childImage.findFirst({
+        where: { childId: child.id, campaignId: { not: null } },
+        orderBy: [{ createdAt: 'desc' }],
+        select: { campaignId: true },
+      });
+      if (!lastImg?.campaignId) {
+        throw new BadRequestException(
+          'Não foi possível determinar a campanha a partir da imagem. Informe campaignId na URL.'
+        );
+      }
+      effectiveCampaignId = lastImg.campaignId;
+    }
+
+    // Montar overrideConfig com os atalhos opcionais
+    const overrideConfig = parseJson(configJson) ?? {};
+    const photoRect = parseJson(photoRectJson);
+    const layout = parseJson(layoutJson);
+    const texts = parseJson(textsJson);
+    if (photoRect) (overrideConfig as any).photoRect = { ...(overrideConfig as any).photoRect, ...photoRect };
+    if (layout) (overrideConfig as any).layout = { ...(overrideConfig as any).layout, ...layout };
+    if (texts) (overrideConfig as any).texts = texts;
+
+    const buf = await this.composeLive.renderChild({
+      childIdOrPublic: id,
+      campaignId: effectiveCampaignId,
+      layoutId: layoutId || null,
+      format,
+      quality,
+      overrideConfig,
+    });
+
+    res.setHeader('Content-Type', format === 'jpeg' ? 'image/jpeg' : 'image/webp');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.send(buf);
   }
 
   // ----- FOTO POR CAMPANHA (ADMIN/STAFF) -----
@@ -211,7 +291,7 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
         category: c.category ?? null,
         wantedGift: c.wantedGift ?? null,
         description: c.description ?? null,
-        school: c.school ?? null,
+        schoolLegacy: c.school ?? null, 
         cityId: city.id,
         cityName: city.name, // importantíssimo p/ seu schema
       };
