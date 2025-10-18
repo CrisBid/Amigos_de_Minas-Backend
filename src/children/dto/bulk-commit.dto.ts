@@ -1,4 +1,4 @@
-import { IsArray, IsInt, IsOptional, IsString, IsISO8601, ValidateNested, IsNotEmpty, IsObject } from 'class-validator';
+import { IsArray, IsInt, IsOptional, IsString, IsISO8601, ValidateNested, IsNotEmpty, IsObject, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class BulkChildDto {
@@ -6,6 +6,8 @@ export class BulkChildDto {
   @IsNotEmpty() @IsString() name!: string;
 
   @IsOptional() @IsISO8601() birthDate?: string; // YYYY-MM-DD
+  @IsOptional() @IsInt() @Min(0) age?: number;
+  @IsOptional() @IsString() motherName?: string;
   @IsOptional() @IsString() category?: string | null;
   @IsOptional() @IsString() wantedGift?: string | null;
   @IsOptional() @IsString() description?: string | null;

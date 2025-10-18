@@ -56,16 +56,133 @@ export class ChildrenController {
     private composeLive: ComposeLiveService,
   ) {}
 
-  /** Lista crianças; se enviar campaignId, o service faz o "lazy hydrate" da mídia por campanha */
+  /** Lista paginada; aceita campaignId, scan, skip, take e filtros */
   @Get()
-async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: string) {
-  return this.service.list(campaignId, scan === '1');
-}
+  async list(
+    @Query('campaignId') campaignId?: string,
+    @Query('scan') scan?: string,
+    @Query('skip') skipStr?: string,
+    @Query('take') takeStr?: string,
+
+    // —— novos filtros —— //
+    @Query('q') q?: string,
+    @Query('cityId') cityId?: string,
+    @Query('communityId') communityId?: string,
+    @Query('schoolId') schoolId?: string,
+    @Query('category') category?: string,
+    @Query('status') status?: 'available' | 'assigned',
+    @Query('minAge') minAgeStr?: string,
+    @Query('maxAge') maxAgeStr?: string,
+  ) {
+    const DEFAULT_TAKE = 24;
+    const MAX_TAKE = 100;
+
+    const skip = Number.isFinite(Number(skipStr)) ? Math.max(0, parseInt(String(skipStr!), 10)) : 0;
+    const take = Number.isFinite(Number(takeStr))
+      ? Math.min(Math.max(1, parseInt(String(takeStr!), 10)), MAX_TAKE)
+      : DEFAULT_TAKE;
+
+    const minAge = Number.isFinite(Number(minAgeStr)) ? parseInt(String(minAgeStr), 10) : undefined;
+    const maxAge = Number.isFinite(Number(maxAgeStr)) ? parseInt(String(maxAgeStr), 10) : undefined;
+
+    return this.service.listPaginated(
+      {
+        campaignId,
+        scanFs: scan === '1',
+        q,
+        cityId,
+        communityId,
+        schoolId,
+        category,
+        status,
+        minAge,
+        maxAge,
+      },
+      { skip, take },
+    );
+  }
+
+  @Get('categories')
+  async listCategories(
+    @Query('campaignId') campaignId?: string,
+    @Query('q') q?: string,
+    @Query('cityId') cityId?: string,
+    @Query('communityId') communityId?: string,
+    @Query('schoolId') schoolId?: string,
+    @Query('status') status?: 'available' | 'assigned',
+    @Query('minAge') minAgeStr?: string,
+    @Query('maxAge') maxAgeStr?: string,
+  ) {
+    const minAge = Number.isFinite(Number(minAgeStr)) ? parseInt(String(minAgeStr), 10) : undefined;
+    const maxAge = Number.isFinite(Number(maxAgeStr)) ? parseInt(String(maxAgeStr), 10) : undefined;
+
+    return this.service.listCategories({
+      campaignId,
+      q,
+      cityId,
+      communityId,
+      schoolId,
+      status,
+      minAge,
+      maxAge,
+    });
+  }
 
   @Get(':id')
   get(@Param('id') id: string) {
     return this.service.get(id);
   }
+
+  /** Estatísticas globais (total, active, pending, available) considerando o ÚLTIMO status por criança */
+  @Get('stats/all')
+  async stats() {
+    const s = await this.service.stats();
+    // força um objeto simples (sem undefined)
+    return {
+      total: s.total ?? 0,
+      active: s.active ?? 0,
+      pending: s.pending ?? 0,
+      in_progress: s.in_progress ?? 0,
+      available: s.available ?? Math.max(0, (s.total ?? 0) - ((s.active ?? 0) + (s.pending ?? 0))),
+      sponsorshipRate: s.sponsorshipRate ?? 0,
+    };
+  }
+
+  /** NOVA rota: tudo em um único payload (geral + por cidade + por comunidade) */
+  @Get('stats/overview')
+  async statsOverview() {
+    return this.service.statsOverview();
+  }
+
+  /** Estatísticas filtradas por query (?cityId=...&communityId=...&schoolId=...) */
+  @Get('stats/filtered')
+  async statsFiltered(
+    @Query('cityId') cityId?: string,
+    @Query('communityId') communityId?: string,
+    @Query('schoolId') schoolId?: string,
+  ) {
+    const s = await this.service.statsFiltered({ cityId, communityId, schoolId });
+    return {
+      total: s.total ?? 0,
+      active: s.active ?? 0,
+      pending: s.pending ?? 0,
+      in_progress: s.in_progress ?? 0,
+      available: s.available ?? Math.max(0, (s.total ?? 0) - ((s.active ?? 0) + (s.pending ?? 0))),
+      sponsorshipRate: s.sponsorshipRate ?? 0,
+    };
+  }
+
+  /** Atalhos REST semânticos */
+  @Get('stats/city/:cityId')
+  async statsByCity(@Param('cityId') cityId: string) {
+    return this.statsFiltered(cityId, undefined, undefined);
+  }
+
+  @Get('stats/community/:communityId')
+  async statsByCommunity(@Param('communityId') communityId: string) {
+    return this.statsFiltered(undefined, communityId, undefined);
+  }
+
 
   // ----- CRUD ADMIN (opcional) -----
 
@@ -312,6 +429,8 @@ async list(@Query('campaignId') campaignId?: string, @Query('scan') scan?: strin
         name: c.name.trim(),
         // birthDate ISO (YYYY-MM-DD) -> Date
         birthDate: c.birthDate ? new Date(`${c.birthDate}T00:00:00.000Z`) : null,
+        age: c.age ?? null,
+        motherName: c.motherName ?? null,
         category: c.category ?? null,
         wantedGift: c.wantedGift ?? null,
         description: c.description ?? null,

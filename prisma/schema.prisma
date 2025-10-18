@@ -28,6 +28,11 @@ enum SponsorshipStatus {
   CANCELLED
 }
 
+enum SponsorshipMethod {
+  GIFT
+  PIX
+}
+
 enum CampaignStatus {
   DRAFT
   ACTIVE
@@ -39,6 +44,7 @@ model User {
   id           String   @id @default(cuid())
   name         String
   email        String   @unique
+  phone        String?  @unique
   passwordHash String
   roles        Role[]   @default([SPONSOR])
   refreshHash  String?
@@ -47,6 +53,8 @@ model User {
 
   sponsorships Sponsorship[]
   profile      Profile?
+
+  CollectionPoint CollectionPoint[]
 }
 
 model Profile {
@@ -183,12 +191,51 @@ model School {
   @@index([cityId, communityId, name])
 }
 
+model CollectionPoint {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+
+  // Localização 100% desnormalizada (texto livre)
+  address     String?
+  district    String?
+  cityName    String?
+  state       String?
+  zipCode     String?
+
+  // Geo (opcional; salve como texto/decimal simples)
+  lat         Decimal? @db.Decimal(9,6)
+  lng         Decimal? @db.Decimal(9,6)
+
+  // Responsável opcional (usuário)
+  responsibleUserId String?
+  responsibleUser   User?     @relation(fields: [responsibleUserId], references: [id], onDelete: SetNull)
+
+  phone       String?
+  openingJson Json?
+  active      Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  // Inverso
+  sponsorships Sponsorship[]
+
+  @@index([active])
+  @@index([cityName, state])
+  @@index([responsibleUserId])
+  @@unique([name, cityName, state]) // evita duplicados no mesmo município/UF
+}
+
 model Child {
   id          String    @id @default(cuid())
   publicId    Int       @unique
   name        String
   birthDate   DateTime?
   age         Int?
+  motherName  String?
 
   // Cidade (como já tinha)
   cityId      String?
@@ -221,16 +268,26 @@ model Child {
 }
 
 model Sponsorship {
-  id         String            @id @default(cuid())
+  id         String             @id @default(cuid())
   childId    String
   sponsorId  String
   campaignId String
-  status     SponsorshipStatus @default(PENDING)
+  status     SponsorshipStatus  @default(PENDING)
+  method     SponsorshipMethod  @default(GIFT)
+
+  donationAmount Decimal?       @db.Decimal(10,2)
+  pixTxid        String?
+  pixPaidAt      DateTime?
+
+  // Ponto de coleta escolhido (opcional)
+  collectionPointId String?
+  collectionPoint   CollectionPoint? @relation(fields: [collectionPointId], references: [id], onDelete: SetNull)
+
   startDate  DateTime?
   endDate    DateTime?
   note       String?
-  createdAt  DateTime          @default(now())
-  updatedAt  DateTime          @updatedAt
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
 
   child    Child    @relation(fields: [childId], references: [id])
   sponsor  User     @relation(fields: [sponsorId], references: [id])
@@ -240,6 +297,9 @@ model Sponsorship {
   @@index([childId])
   @@index([sponsorId])
   @@index([campaignId])
+  @@index([status])
+  @@index([method])
+  @@index([collectionPointId])
 }
 
 enum ChildImageStatus {

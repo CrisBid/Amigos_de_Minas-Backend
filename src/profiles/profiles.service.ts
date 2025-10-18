@@ -59,6 +59,7 @@ export class ProfilesService {
       city: (dto.city),
       profession: (dto.profession),
       phone: (dto.phone),
+      cep: (dto.cep)
     };
 
     return this.prisma.profile.upsert({

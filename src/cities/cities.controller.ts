@@ -8,13 +8,11 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
-@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('cities')
 export class CitiesController {
-  constructor(private readonly service: CitiesService) {}
+  constructor(private service: CitiesService) {}
 
   @Get()
-  @Roles('ADMIN', 'STAFF')
   list(
     @Query('q') q?: string,
     @Query('page') page?: string,
@@ -24,7 +22,6 @@ export class CitiesController {
   }
 
   @Get(':id')
-  @Roles('ADMIN', 'STAFF')
   get(@Param('id') id: string) {
     return this.service.findById(id);
   }

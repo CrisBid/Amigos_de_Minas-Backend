@@ -10,13 +10,13 @@ export class AuthController {
 
   @Post('register')
   register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto.name, dto.email, dto.password, dto.roles);
+    return this.auth.register(dto);
   }
 
   // Endpoint usado pelo NextAuth Credentials
   @Post('login')
   login(@Body() dto: LoginDto) {
-    return this.auth.login(dto.email, dto.password);
+    return this.auth.login(dto.identifier, dto.password);
   }
 
   @Post('refresh')

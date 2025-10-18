@@ -4,6 +4,7 @@ export class CreateChildDto {
   @IsString() name: string;
   @IsOptional() birthDate?: Date;
   @IsOptional() @IsInt() @Min(0) age?: number;
+  @IsOptional() @IsString() motherName?: string;
   @IsString() city: string;
   @IsOptional() @IsString() schoolLegacy?: string;
   @IsOptional() @IsString() category?: string;

@@ -11,6 +11,6 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type','Authorization'],
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  await app.listen(3001);
+  await app.listen(3050);
 }
 bootstrap();
