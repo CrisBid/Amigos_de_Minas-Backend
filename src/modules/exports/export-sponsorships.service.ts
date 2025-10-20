@@ -3,6 +3,8 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExportLevel, ExportSponsorshipsQueryDto } from './dto/export-sponsorships.dto';
 import { buildExcelBuffer, ChildRow } from './utils/excel.util';
+// Opcional: se quiser tipar os filtros com os enums:
+import { SponsorshipStatus, SponsorshipMethod } from '@prisma/client';
 
 function calcAge(birth: Date | null): number | null {
   if (!birth) return null;
@@ -29,16 +31,16 @@ export class ExportSponsorshipsService {
     // Where base
     const where: any = {};
 
-    if (statusList?.length) where.status = { in: statusList as any[] };
-    if (methodList?.length) where.method = { in: methodList as any[] };
+    if (statusList?.length) where.status = { in: statusList as SponsorshipStatus[] };
+    if (methodList?.length) where.method = { in: methodList as SponsorshipMethod[] };
 
-    // Níveis/filtros
+    // Níveis/filtros — agora direto da CRIANÇA (cityId/communityId)
     switch (query.level) {
       case ExportLevel.CITY:
-        if (query.cityId) where.child = { school: { community: { cityId: query.cityId } } };
+        if (query.cityId) where.child = { cityId: query.cityId };
         break;
       case ExportLevel.COMMUNITY:
-        if (query.communityId) where.child = { school: { communityId: query.communityId } };
+        if (query.communityId) where.child = { communityId: query.communityId };
         break;
       case ExportLevel.SPONSOR:
         if (query.sponsorId) where.sponsorId = query.sponsorId;
@@ -58,53 +60,78 @@ export class ExportSponsorshipsService {
     const sponsorships = await this.prisma.sponsorship.findMany({
       where,
       orderBy: [{ createdAt: 'asc' }],
-      include: {
-        sponsor: true,
-        child: {
-          include: {
-            school: {
-              include: {
-                community: {
-                  include: { city: true },
-                },
-              },
-            },
+      select: {
+        id: true,
+        status: true,
+        method: true,
+        startDate: true,
+        endDate: true,
+        createdAt: true,
+        pixTxid: true,
+        donationAmount: true,
+
+        // Pega só o necessário do padrinho (evita dados sensíveis)
+        sponsor: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            profile: { select: { phone: true } },
+            // nunca inclua passwordHash
           },
         },
-        collectionPoint: true, // se existir na sua modelagem
+
+        // Cidade/comunidade direto da criança
+        child: {
+          select: {
+            id: true,
+            publicId: true,
+            name: true,
+            birthDate: true,
+            age: true, // se você preenche isso no banco; se não, será null e caímos no calcAge
+            wantedGift: true, // no seu schema é wantedGift; ajuste se seu DTO usa outro nome
+            motherName: true,
+            cityName: true, // texto legado, útil como fallback
+            city: { select: { id: true, publicId: true, name: true } },
+            community: { select: { id: true, publicId: true, name: true } },
+            school: { select: { id: true, publicId: true, name: true } }, // opcional
+          },
+        },
+
+        collectionPoint: {
+          select: { id: true, name: true, cityName: true, state: true },
+        },
       },
     });
 
     // Mapeia linhas
     const rows: ChildRow[] = sponsorships.map(sp => {
       const child = sp.child;
-      const school = child?.school || null;
-      const community = school?.community || null;
-      const city = community?.city || null;
+      const birthDate: Date | null = child?.birthDate ?? null;
+      const age = child?.age ?? calcAge(birthDate);
 
-      const birthDate = child?.birthDate ? new Date(child.birthDate) : null;
-      const age = calcAge(birthDate);
-
-      // Contato do padrinho (prioriza celular, depois email, ajuste conforme seu schema)
+      // Contato do padrinho: priorize profile.phone -> sponsor.phone -> email
       const contact =
-        (sp.sponsor as any)?.phone ||
-        (sp.sponsor as any)?.mobile ||
-        (sp.sponsor as any)?.email ||
-        null;
+        child?.id && sp.sponsor?.profile?.phone
+          ? sp.sponsor.profile.phone
+          : sp.sponsor?.phone || sp.sponsor?.email || null;
 
-      // PIX: pode vir de sponsorship.pixKey, sponsor.pixKey, etc. Ajuste conforme seu schema
-      const pix =
-        (sp as any).pixKey ||
-        (sp.sponsor as any)?.pixKey ||
-        null;
+      // PIX: no schema há pixTxid (não pixKey)
+      const pix = sp.pixTxid ?? null;
+
+      // Cidade/comunidade/escola direto da criança
+      const cityName = child?.city?.name ?? child?.cityName ?? null;
+      const communityName = child?.community?.name ?? null;
+      const schoolName = child?.school?.name ?? null;
 
       return {
         publicId: child?.publicId ?? null,
         childName: child?.name ?? null,
         birthDate: birthDate ? birthDate.toISOString().slice(0, 10) : null,
         age,
-        gift: (sp as any)?.gift || (child as any)?.gift || null,
-        mother: (child as any)?.mother || null,
+        gift: child?.wantedGift ?? null,
+        mother: child?.motherName ?? null,
 
         sponsorName: sp.sponsor?.name ?? null,
         contact,
@@ -112,15 +139,16 @@ export class ExportSponsorshipsService {
         pix,
         collectionPoint: sp.collectionPoint?.name ?? null,
 
-        city: city?.name ?? null,
-        community: community?.name ?? null,
-        school: school?.name ?? null,
+        city: cityName,
+        community: communityName,
+        school: schoolName,
 
-        _cityKey: city?.name || 'Sem cidade',
-        _communityKey: community?.name || 'Sem comunidade',
-        _schoolKey: school?.name || 'Sem escola',
+        // chaves de agrupamento (com fallbacks legíveis)
+        _cityKey: cityName || 'Sem cidade',
+        _communityKey: communityName || 'Sem comunidade',
+        _schoolKey: schoolName || 'Sem escola',
         _sponsorKey: sp.sponsor?.name || 'Sem padrinho',
-      };
+      } as ChildRow;
     });
 
     return rows;
@@ -130,7 +158,7 @@ export class ExportSponsorshipsService {
     const rows = await this.fetchRows(query);
 
     // Decide a estratégia de abas com base no level
-    let levelForExcel: 'general' | 'city' | 'community' | 'sponsor' | 'selection' =
+    const levelForExcel: 'general' | 'city' | 'community' | 'sponsor' | 'selection' =
       (query.level as any) || 'general';
 
     const buffer = await buildExcelBuffer(rows, levelForExcel);
