@@ -15,6 +15,9 @@ import { join } from 'path';
 import { CommunitiesModule } from './communities/communities.module';
 import { SchoolsModule } from './schools/schools.module';
 import { CollectionPointsModule } from './collection-points/collection-points.module';
+import { ExportSponsorshipsModule } from './modules/exports/export-sponsorships.module';
+import { SponsorsModule } from './sponsors/sponsors.module';
+import { ChildrenExportModule } from './exports/children/export-children.module';
 
 @Module({
   imports: [
@@ -33,13 +36,16 @@ import { CollectionPointsModule } from './collection-points/collection-points.mo
     ChildrenModule, 
     SponsorshipsModule, 
     ProfilesModule, 
+    SponsorsModule,
     CampaignsModule,
     StorageModule,
     CitiesModule,
     CommunitiesModule,
     SchoolsModule,
     ChildImagesModule,
-    CollectionPointsModule
+    CollectionPointsModule,
+    ExportSponsorshipsModule,
+    ChildrenExportModule
   ],
 })
 export class AppModule {}
