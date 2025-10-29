@@ -22,8 +22,12 @@ enum Role {
 
 enum SponsorshipStatus {
   PENDING
-  COMPLETED
   IN_PROGRESS
+  IN_PURCHASE       // (antes "EM_COMPRA")
+  PACKED            // (antes "EMBALADO")
+  BOXED             // (antes "ENCAIXOTADO")
+  AWAITING_DELIVERY // (antes "AGUARDO_ENTREGA")
+  COMPLETED
   ENDED
   CANCELLED
 }

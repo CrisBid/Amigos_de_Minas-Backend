@@ -1,17 +1,14 @@
-import { IsOptional, IsString, IsEnum, IsISO8601, IsNumber, Min, IsUUID } from 'class-validator';
-
-export enum SponsorshipStatus {
-  PENDING = 'PENDING',
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-  ENDED = 'ENDED',
-  CANCELLED = 'CANCELLED',
-}
+// sponsorships.dto.ts
+import { IsOptional, IsString, IsEnum, IsISO8601, IsNumber, Min } from 'class-validator';
+import { SponsorshipStatus as PrismaSponsorshipStatus } from '@prisma/client';
 
 export enum SponsorshipMethod {
   GIFT = 'GIFT',
   PIX = 'PIX',
 }
+
+// (opcional) reexport do type para uso externo
+export type SponsorshipStatus = PrismaSponsorshipStatus;
 
 export class UpdateSponsorshipDto {
   @IsOptional()
@@ -23,15 +20,14 @@ export class UpdateSponsorshipDto {
   collectionPointId?: string;
 
   @IsOptional()
-  @IsEnum(SponsorshipStatus)
-  status?: SponsorshipStatus;
+  @IsEnum(PrismaSponsorshipStatus)
+  status?: PrismaSponsorshipStatus;
 
-  // ✅ NOVO: permitir alterar o método (com regras no service)
+  // ✅ permitir alterar o método (regras no service)
   @IsOptional()
   @IsEnum(SponsorshipMethod)
   method?: SponsorshipMethod;
 
-  // (OPCIONAIS – caso queira já receber)
   @IsOptional()
   @IsNumber()
   @Min(0)

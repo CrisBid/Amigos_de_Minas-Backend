@@ -1,7 +1,9 @@
+// src/modules/exports/export-children.service.ts
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChildrenExportQueryDto, BindFilter, ExportLevel } from './dto/query.dto';
 import { buildChildrenExcel, ChildRow } from './utils/excel.util';
+import { SponsorshipStatus } from '@prisma/client'; // 👈 use o enum do Prisma
 
 function calcAge(birth: Date | null): number | null {
   if (!birth) return null;
@@ -12,8 +14,21 @@ function calcAge(birth: Date | null): number | null {
   return age;
 }
 
-// considere estes status como "apadrinhamento ativo" — ajuste conforme sua regra:
-const ACTIVE_SPONSORSHIP = ['PENDING', 'IN_PROGRESS', 'COMPLETED'] as const;
+/** Grupo de "em progresso" para lógica de vínculo */
+const IN_PROGRESS_GROUP: SponsorshipStatus[] = [
+  SponsorshipStatus.IN_PROGRESS,
+  SponsorshipStatus.IN_PURCHASE,
+  SponsorshipStatus.PACKED,
+  SponsorshipStatus.BOXED,
+  SponsorshipStatus.AWAITING_DELIVERY,
+];
+
+/** Tudo que conta como vínculo ativo/ocupado para a criança no export */
+const CHILD_BIND_STATUSES: SponsorshipStatus[] = [
+  SponsorshipStatus.PENDING,
+  ...IN_PROGRESS_GROUP,
+  SponsorshipStatus.COMPLETED,
+];
 
 @Injectable()
 export class ChildrenExportService {
@@ -34,11 +49,11 @@ export class ChildrenExportService {
       if (ids.length) whereChild.id = { in: ids };
     }
 
-    // filtro por vinculação
+    // filtro por vinculação (apadrinhado / não apadrinhado)
     if (q.bind === BindFilter.SPONSORED) {
-      whereChild.sponsorships = { some: { status: { in: ACTIVE_SPONSORSHIP as any } } };
+      whereChild.sponsorships = { some: { status: { in: CHILD_BIND_STATUSES } } };
     } else if (q.bind === BindFilter.UNSPONSORED) {
-      whereChild.sponsorships = { none: { status: { in: ACTIVE_SPONSORSHIP as any } } };
+      whereChild.sponsorships = { none: { status: { in: CHILD_BIND_STATUSES } } };
     }
 
     const children = await this.prisma.child.findMany({
@@ -49,21 +64,20 @@ export class ChildrenExportService {
         publicId: true,
         name: true,
         birthDate: true,
-        age: true,            // se você mantém isso; caso não, fica null e usamos calcAge
+        age: true,            // se mantém; senão, calcAge cobre
         motherName: true,
         wantedGift: true,
-        // textos legados úteis como fallback
-        cityName: true,
+        cityName: true,       // fallback legado
 
         city: { select: { id: true, publicId: true, name: true } },
         community: { select: { id: true, publicId: true, name: true } },
-        // escola é opcional: mantenha se quiser exibir na planilha
         school: { select: { id: true, publicId: true, name: true } },
 
+        // pega o vínculo mais recente que conte como "ocupado"
         sponsorships: {
-          where: { status: { in: ACTIVE_SPONSORSHIP as any } },
+          where: { status: { in: CHILD_BIND_STATUSES } },
           orderBy: { createdAt: 'desc' },
-          take: 1, // vínculo ativo mais recente (se houver)
+          take: 1,
           select: {
             method: true,
             pixTxid: true,

@@ -78,24 +78,34 @@ type CommunityRow = {
   sponsorshipRate: number;
 };
 
-const BUSY_STATUSES: SponsorshipStatus[] = [
-    SponsorshipStatus.ENDED,
-    SponsorshipStatus.CANCELLED,
-    SponsorshipStatus.PENDING,
-    SponsorshipStatus.COMPLETED,
-    SponsorshipStatus.IN_PROGRESS,
-  ];
+// Remova este bloco do TOPO (seu const solto):
+// const BUSY_STATUSES: SponsorshipStatus[] = [ ... ];
 
+// Dentro da classe:
 @Injectable()
 export class ChildrenService {
   constructor(private prisma: PrismaService, private storage: StorageService) {}
 
+  // ✅ ÚNICA FONTE DE VERDADE: tudo que torna a criança "ocupada/indisponível"
   private static readonly BUSY_STATUSES: SponsorshipStatus[] = [
     SponsorshipStatus.ENDED,
     SponsorshipStatus.CANCELLED,
     SponsorshipStatus.PENDING,
     SponsorshipStatus.COMPLETED,
     SponsorshipStatus.IN_PROGRESS,
+    SponsorshipStatus.IN_PURCHASE,
+    SponsorshipStatus.PACKED,
+    SponsorshipStatus.BOXED,
+    SponsorshipStatus.AWAITING_DELIVERY,
+  ];
+
+  // ✅ Grupo “em progresso” para estatísticas
+  private static readonly IN_PROGRESS_GROUP: SponsorshipStatus[] = [
+    SponsorshipStatus.IN_PROGRESS,
+    SponsorshipStatus.IN_PURCHASE,
+    SponsorshipStatus.PACKED,
+    SponsorshipStatus.BOXED,
+    SponsorshipStatus.AWAITING_DELIVERY,
   ];
 
   private addYears(base: Date, years: number) {
@@ -175,18 +185,19 @@ export class ChildrenService {
     // Consideramos "ocupado" se tiver sponsorship com status em ACTIVE/PENDING/COMPLETED/IN_PROGRESS.
     // Escopo: se campaignId vier, filtramos por ela; senão, olhamos globalmente.
 
+    // Filtro por status (available/assigned)
     if (status === 'assigned') {
       if (campaignId) {
         where.sponsorships = {
           some: {
             campaignId,
-            status: { in: BUSY_STATUSES }, // 👈 enum, não string[]
+            status: { in: ChildrenService.BUSY_STATUSES },
           },
         };
       } else {
         where.sponsorships = {
           some: {
-            status: { in: BUSY_STATUSES }, // 👈
+            status: { in: ChildrenService.BUSY_STATUSES },
           },
         };
       }
@@ -198,7 +209,7 @@ export class ChildrenService {
             sponsorships: {
               none: {
                 campaignId,
-                status: { in: BUSY_STATUSES }, // 👈
+                status: { in: ChildrenService.BUSY_STATUSES },
               },
             },
           },
@@ -208,7 +219,7 @@ export class ChildrenService {
           ...(where.AND ?? []),
           {
             sponsorships: {
-              none: { status: { in: BUSY_STATUSES } }, // 👈
+              none: { status: { in: ChildrenService.BUSY_STATUSES } },
             },
           },
         ];
@@ -231,18 +242,18 @@ export class ChildrenService {
         school: true,
         images: true,
         sponsorships: campaignId
-          ? ({
-              where: { campaignId, status: { in: BUSY_STATUSES } }, // 👈
-              select: { id: true, status: true, campaignId: true, createdAt: true },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            } as Prisma.Child$sponsorshipsArgs)
-          : ({
-              where: { status: { in: BUSY_STATUSES } }, // 👈
-              select: { id: true, status: true, campaignId: true, createdAt: true },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            } as Prisma.Child$sponsorshipsArgs),
+        ? ({
+            where: { campaignId, status: { in: ChildrenService.BUSY_STATUSES } },
+            select: { id: true, status: true, campaignId: true, createdAt: true },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          } as Prisma.Child$sponsorshipsArgs)
+        : ({
+            where: { status: { in: ChildrenService.BUSY_STATUSES } },
+            select: { id: true, status: true, campaignId: true, createdAt: true },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          } as Prisma.Child$sponsorshipsArgs),
       },
     });
 
@@ -391,13 +402,18 @@ export class ChildrenService {
       select: { status: true },
     });
 
+    // "active" = COMPLETED (mantendo contrato atual)
     const active = latest.filter(x => x.status === 'COMPLETED').length;
     const pending = latest.filter(x => x.status === 'PENDING').length;
-    const in_progress = latest.filter(x => x.status === 'IN_PROGRESS').length;
+
+    // "in_progress" = qualquer um dos grupos de progresso
+    const in_progress = latest.filter(x =>
+      ChildrenService.IN_PROGRESS_GROUP.includes(x.status)
+    ).length;
+
     const available = Math.max(0, total - (active + pending + in_progress));
     const sponsorshipRate = total > 0 ? Math.round((active / total) * 100) : 0;
 
-    //sempre retorne números primitivos
     return {
       total: Number(total),
       active: Number(active),
@@ -406,6 +422,7 @@ export class ChildrenService {
       available: Number(available),
       sponsorshipRate: Number(sponsorshipRate),
     };
+
   }
 
   async statsFiltered({ cityId, communityId, schoolId }: RegionFilter): Promise<Stats> {
@@ -466,9 +483,10 @@ export class ChildrenService {
 
     const active = latest.filter(x => x.status === 'COMPLETED').length;
     const pending = latest.filter(x => x.status === 'PENDING').length;
-    const in_progress = latest.filter(x => x.status === 'IN_PROGRESS').length;
+    const in_progress = latest.filter(x =>
+      ChildrenService.IN_PROGRESS_GROUP.includes(x.status)
+    ).length;
 
-    // crianças SEM sponsorship recente ficam como "available"
     const available = Math.max(0, total - (active + pending + in_progress));
     const sponsorshipRate = total > 0 ? Math.round((active / total) * 100) : 0;
 
@@ -549,7 +567,7 @@ export class ChildrenService {
       const st = latestStatusByChild.get(cid);
       if (st === 'COMPLETED') generalActive++;
       else if (st === 'PENDING') generalPending++;
-      else if (st === 'IN_PROGRESS') generalInProgress++;
+      else if (st && ChildrenService.IN_PROGRESS_GROUP.includes(st)) generalInProgress++;
     }
     const generalAvailable = Math.max(0, totalChildren - (generalActive + generalPending + generalInProgress));
     const generalRate = totalChildren > 0 ? Math.round((generalActive / totalChildren) * 100) : 0;
@@ -582,9 +600,10 @@ export class ChildrenService {
       const row = cityAgg.get(cityId)!;
       row.total += 1;
       const st = latestStatusByChild.get(c.id);
+      // por CIDADE
       if (st === 'COMPLETED') row.active += 1;
       else if (st === 'PENDING') row.pending += 1;
-      else if (st === 'IN_PROGRESS') row.in_progress += 1;
+      else if (st && ChildrenService.IN_PROGRESS_GROUP.includes(st)) row.in_progress += 1;
     }
     // finalize available + rate
     for (const row of cityAgg.values()) {
@@ -618,9 +637,10 @@ export class ChildrenService {
       const row = commAgg.get(commId)!;
       row.total += 1;
       const st = latestStatusByChild.get(c.id);
+      // por COMUNIDADE
       if (st === 'COMPLETED') row.active += 1;
       else if (st === 'PENDING') row.pending += 1;
-      else if (st === 'IN_PROGRESS') row.in_progress += 1;
+      else if (st && ChildrenService.IN_PROGRESS_GROUP.includes(st)) row.in_progress += 1;
     }
     for (const row of commAgg.values()) {
       row.available = Math.max(0, row.total - (row.active + row.pending + row.in_progress));

@@ -15,24 +15,45 @@ function calcAge(birth: Date | null): number | null {
   return age;
 }
 
+function parseEnumList<T extends string>(
+  csv: string | undefined,
+  valid: readonly T[],
+): T[] | undefined {
+  if (!csv) return undefined;
+  const set = new Set(valid.map(v => v.toUpperCase()));
+  const out = csv
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(s => s.toUpperCase())
+    .filter(s => set.has(s)) as T[];
+  return out.length ? out : undefined;
+}
+
+const STATUS_PT: Record<SponsorshipStatus, string> = {
+  PENDING: 'Pendente',
+  IN_PROGRESS: 'Em andamento',
+  IN_PURCHASE: 'Em compra',
+  PACKED: 'Embalado',
+  BOXED: 'Encaixotado',
+  AWAITING_DELIVERY: 'Aguardando entrega',
+  COMPLETED: 'Concluído',
+  ENDED: 'Encerrado',
+  CANCELLED: 'Cancelado',
+};
+
 @Injectable()
 export class ExportSponsorshipsService {
   constructor(private prisma: PrismaService) {}
 
   async fetchRows(query: ExportSponsorshipsQueryDto): Promise<ChildRow[]> {
-    const statusList = query.status
-      ? query.status.split(',').map(s => s.trim()).filter(Boolean)
-      : undefined;
-
-    const methodList = query.method
-      ? query.method.split(',').map(s => s.trim()).filter(Boolean)
-      : undefined;
+    const statusList = parseEnumList(query.status, Object.values(SponsorshipStatus));
+    const methodList = parseEnumList(query.method, Object.values(SponsorshipMethod));
 
     // Where base
     const where: any = {};
-
-    if (statusList?.length) where.status = { in: statusList as SponsorshipStatus[] };
-    if (methodList?.length) where.method = { in: methodList as SponsorshipMethod[] };
+    if (statusList) where.status = { in: statusList };
+    if (methodList) where.method = { in: methodList };
 
     // Níveis/filtros — agora direto da CRIANÇA (cityId/communityId)
     switch (query.level) {
@@ -137,13 +158,17 @@ export class ExportSponsorshipsService {
         contact,
         method: sp.method ?? null,
         pix,
+
+        // NOVO (opcional):
+        status: sp.status ?? null,
+        statusLabel: sp.status ? STATUS_PT[sp.status] : null,
+
         collectionPoint: sp.collectionPoint?.name ?? null,
 
         city: cityName,
         community: communityName,
         school: schoolName,
 
-        // chaves de agrupamento (com fallbacks legíveis)
         _cityKey: cityName || 'Sem cidade',
         _communityKey: communityName || 'Sem comunidade',
         _schoolKey: schoolName || 'Sem escola',

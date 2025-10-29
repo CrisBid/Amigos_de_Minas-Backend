@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { UpdateSponsorshipDto, SponsorshipStatus, SponsorshipMethod } from './dto/sponsorships.dto';
-import { Prisma } from '@prisma/client';
+import { UpdateSponsorshipDto, SponsorshipMethod } from './dto/sponsorships.dto';
+import { Prisma, SponsorshipStatus } from '@prisma/client'; // 👈 usar enum do Prisma
 
 type AppUser = { sub: string; roles?: string[] };
 
@@ -126,7 +126,7 @@ export class SponsorshipsService {
     return this.createOne(args);
   }
 
-  async createOne(args: CreateOneArgs) {
+    async createOne(args: CreateOneArgs) {
     const { childId, sponsorUserId, campaignId, method, note, donationAmount, pixTxid, collectionPointId } = args;
 
     const child = await this.prisma.child.findUnique({ where: { id: childId }, select: { id: true } });
@@ -137,7 +137,6 @@ export class SponsorshipsService {
     });
     if (dup) throw new BadRequestException('Esta criança já está vinculada a esta campanha.');
 
-    // >>> regra: se for GIFT (entrega de presente), collectionPointId é obrigatório no seu fluxo
     if (method === 'GIFT') {
       if (!collectionPointId) throw new BadRequestException('collectionPointId é obrigatório para método GIFT.');
       const exists = await this.prisma.collectionPoint.findUnique({ where: { id: collectionPointId } });
@@ -151,10 +150,9 @@ export class SponsorshipsService {
         campaignId,
         method,
         note,
-        status: SponsorshipStatus.PENDING,
+        status: SponsorshipStatus.PENDING, // 👈 enum do Prisma
         donationAmount: donationAmount != null ? new Prisma.Decimal(donationAmount) : undefined,
         pixTxid,
-        // >>> persistir
         collectionPointId: collectionPointId ?? null,
       },
       select: this.sponsorshipSelectForMe,
@@ -207,10 +205,9 @@ export class SponsorshipsService {
             campaignId,
             method,
             note,
-            status: SponsorshipStatus.PENDING,
+            status: SponsorshipStatus.PENDING, // 👈 enum do Prisma
             donationAmount: donationAmount != null ? new Prisma.Decimal(donationAmount) : undefined,
             pixTxid,
-            // >>> persistir
             collectionPointId: collectionPointId ?? null,
           },
           select: this.sponsorshipSelectForMe,
@@ -272,14 +269,14 @@ export class SponsorshipsService {
   async activate(id: string) {
     return this.prisma.sponsorship.update({
       where: { id },
-      data: { status: SponsorshipStatus.COMPLETED, startDate: new Date() },
+      data: { status: SponsorshipStatus.COMPLETED, startDate: new Date() }, // 👈
     });
   }
 
   async end(id: string) {
     return this.prisma.sponsorship.update({
       where: { id },
-      data: { status: SponsorshipStatus.ENDED, endDate: new Date() },
+      data: { status: SponsorshipStatus.ENDED, endDate: new Date() }, // 👈
     });
   }
 
@@ -293,31 +290,25 @@ export class SponsorshipsService {
     const roles = user?.roles ?? [];
     const isAdminOrStaff = roles.includes('ADMIN') || roles.includes('STAFF');
     const isSponsor = current.sponsor?.id === user?.sub;
-    const isSponsorOnly = isSponsor && !isAdminOrStaff; // ← chave: só restringe se for APENAS sponsor
+    const isSponsorOnly = isSponsor && !isAdminOrStaff;
 
     if (!isAdminOrStaff && !isSponsor) {
       throw new ForbiddenException('Você não tem permissão para alterar este apadrinhamento.');
     }
 
-    // ---------- Normalização/validação leve de entrada ----------
     const updates: any = {};
 
     if (dto.note !== undefined) updates.note = dto.note;
     if (dto.method) updates.method = dto.method;
-
     if (dto.donationAmount != null) updates.donationAmount = dto.donationAmount;
-
     if (dto.pixTxid != null) updates.pixTxid = dto.pixTxid;
 
     if (dto.pixPaidAt) {
       const d = new Date(dto.pixPaidAt);
-      if (Number.isNaN(d.getTime())) {
-        throw new BadRequestException('pixPaidAt inválido.');
-      }
+      if (Number.isNaN(d.getTime())) throw new BadRequestException('pixPaidAt inválido.');
       updates.pixPaidAt = d;
     }
 
-    // ---------- Regras para ADMIN/STAFF ----------
     if (isAdminOrStaff) {
       if (dto.status) updates.status = dto.status;
 
@@ -326,7 +317,6 @@ export class SponsorshipsService {
         if (Number.isNaN(d.getTime())) throw new BadRequestException('startDate inválido.');
         updates.startDate = d;
       }
-
       if (dto.endDate) {
         const d = new Date(dto.endDate);
         if (Number.isNaN(d.getTime())) throw new BadRequestException('endDate inválido.');
@@ -334,21 +324,27 @@ export class SponsorshipsService {
       }
     }
 
-    // ---------- Restrições apenas para quem é SÓ sponsor ----------
+    // ---------- Restrições para quem é SÓ sponsor ----------
     if (isSponsorOnly) {
-      // Não pode mexer em datas
       if (dto.startDate || dto.endDate) {
         throw new BadRequestException('Você não pode alterar datas deste apadrinhamento.');
       }
 
-      // Status: só pode cancelar
       if (dto.status && dto.status !== SponsorshipStatus.CANCELLED) {
         throw new BadRequestException('Você só pode cancelar seu apadrinhamento.');
       }
 
       if (dto.status === SponsorshipStatus.CANCELLED) {
-        const allowedFrom = [SponsorshipStatus.PENDING, SponsorshipStatus.IN_PROGRESS];
-        if (!allowedFrom.includes(current.status as any)) {
+        // ✅ pode cancelar se estiver em PENDING ou em QUALQUER estágio de progresso
+        const cancellableFrom: SponsorshipStatus[] = [
+          SponsorshipStatus.PENDING,
+          SponsorshipStatus.IN_PROGRESS,
+          SponsorshipStatus.IN_PURCHASE,
+          SponsorshipStatus.PACKED,
+          SponsorshipStatus.BOXED,
+          SponsorshipStatus.AWAITING_DELIVERY,
+        ];
+        if (!cancellableFrom.includes(current.status as SponsorshipStatus)) {
           throw new BadRequestException('Não é possível cancelar neste estágio.');
         }
         updates.status = SponsorshipStatus.CANCELLED;
@@ -363,11 +359,9 @@ export class SponsorshipsService {
 
     // ---------- Ajustes automáticos úteis ----------
     if (isAdminOrStaff && dto.status) {
-      // Se marcou COMPLETED e não tem startDate definido
       if (dto.status === SponsorshipStatus.COMPLETED && !updates.startDate && !current.startDate) {
         updates.startDate = new Date();
       }
-      // Se marcou ENDED/CANCELLED e não tem endDate
       if ([SponsorshipStatus.ENDED, SponsorshipStatus.CANCELLED].includes(dto.status as any) && !updates.endDate) {
         updates.endDate = new Date();
       }
@@ -390,7 +384,6 @@ export class SponsorshipsService {
       }
     }
 
-    // ---------- Persistência ----------
     return this.prisma.sponsorship.update({
       where: { id },
       data: updates,

@@ -1,3 +1,4 @@
+// src/modules/exports/utils/excel.util.ts
 import ExcelJS from 'exceljs';
 
 export type ChildRow = {
@@ -37,6 +38,12 @@ function groupBy<T>(arr: T[], keyFn: (i: T) => string) {
   }, {} as Record<string, T[]>);
 }
 
+// Opcional: mapeia método para PT-BR ao exportar
+const METHOD_PT: Record<string, string> = {
+  GIFT: 'Presente',
+  PIX: 'Pix',
+};
+
 export async function buildChildrenExcel(rows: ChildRow[], level: ExcelLevel) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Amigos de Minas';
@@ -44,11 +51,19 @@ export async function buildChildrenExcel(rows: ChildRow[], level: ExcelLevel) {
 
   let grouped: Record<string, ChildRow[]>;
   switch (level) {
-    case 'general':    grouped = groupBy(rows, r => r._cityKey); break;
-    case 'city':       grouped = groupBy(rows, r => r._communityKey); break;
-    case 'community':  grouped = groupBy(rows, r => r._schoolKey); break;
+    case 'general':
+      grouped = groupBy(rows, (r) => r._cityKey || 'Sem cidade');
+      break;
+    case 'city':
+      grouped = groupBy(rows, (r) => r._communityKey || 'Sem comunidade');
+      break;
+    case 'community':
+      grouped = groupBy(rows, (r) => r._schoolKey || 'Sem escola');
+      break;
     case 'selection':
-    default:           grouped = groupBy(rows, r => r._cityKey); break;
+    default:
+      grouped = groupBy(rows, (r) => r._cityKey || 'Sem cidade');
+      break;
   }
 
   for (const [sheetName, items] of Object.entries(grouped)) {
@@ -63,7 +78,7 @@ export async function buildChildrenExcel(rows: ChildRow[], level: ExcelLevel) {
       { header: 'APADRINHADA', key: 'hasSponsor', width: 14 },
       { header: 'PADRINHO', key: 'sponsorName', width: 26 },
       { header: 'CONTATO', key: 'sponsorContact', width: 22 },
-      { header: 'FORMA', key: 'method', width: 14 },
+      { header: 'FORMA', key: 'method', width: 18 }, // um pouco maior para “Presente”
       { header: 'PIX', key: 'pix', width: 26 },
       { header: 'PONTO DE ENTREGA', key: 'collectionPoint', width: 26 },
       { header: 'PRESENTE', key: 'gift', width: 24 },
@@ -72,13 +87,23 @@ export async function buildChildrenExcel(rows: ChildRow[], level: ExcelLevel) {
       { header: 'ESCOLA', key: 'school', width: 20 },
     ];
 
-    sheet.getRow(1).eachCell(c => {
+    // Estilo do cabeçalho
+    sheet.getRow(1).eachCell((c) => {
       c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25A273' } };
       c.alignment = { vertical: 'middle', horizontal: 'center' };
-      c.border = { top: {style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+      c.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
     });
 
+    // Congela linha do cabeçalho
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    // Linhas
     for (const r of items) {
       sheet.addRow({
         publicId: r.publicId ?? '',
@@ -89,7 +114,7 @@ export async function buildChildrenExcel(rows: ChildRow[], level: ExcelLevel) {
         hasSponsor: r.hasSponsor ? 'SIM' : 'NÃO',
         sponsorName: r.sponsorName ?? '',
         sponsorContact: r.sponsorContact ?? '',
-        method: r.method ?? '',
+        method: r.method ? (METHOD_PT[r.method] ?? r.method) : '',
         pix: r.pix ?? '',
         collectionPoint: r.collectionPoint ?? '',
         gift: r.gift ?? '',

@@ -24,8 +24,10 @@ export type ChildRow = {
   _communityKey: string;
   _schoolKey: string;
   _sponsorKey: string;
+  
+  status?: string | null;       // ex.: "IN_PROGRESS"
+  statusLabel?: string | null;  // ex.: "Em andamento"
 };
-
 export type ExcelLevel =
   | 'general'     // agrupa por cidade
   | 'city'        // agrupa por comunidade
@@ -71,6 +73,7 @@ export async function buildExcelBuffer(rows: ChildRow[], level: ExcelLevel) {
   for (const [sheetName, items] of Object.entries(grouped)) {
     const sheet = wb.addWorksheet(sheetName);
 
+    // 2) Colunas: insira antes ou depois de onde preferir
     sheet.columns = [
       { header: 'PUBLICID', key: 'publicId', width: 12 },
       { header: 'CRIANÇA', key: 'childName', width: 25 },
@@ -78,6 +81,11 @@ export async function buildExcelBuffer(rows: ChildRow[], level: ExcelLevel) {
       { header: 'IDADE', key: 'age', width: 8 },
       { header: 'PRESENTE', key: 'gift', width: 25 },
       { header: 'MÃE', key: 'mother', width: 25 },
+
+      // ▼ novas (status técnico e label PT-BR)
+      { header: 'STATUS', key: 'status', width: 18 },
+      { header: 'STATUS (PT)', key: 'statusLabel', width: 22 },
+
       { header: 'PADRINHO', key: 'sponsorName', width: 25 },
       { header: 'CONTATO', key: 'contact', width: 25 },
       { header: 'FORMA DE APADRINHAMENTO', key: 'method', width: 25 },
@@ -101,6 +109,7 @@ export async function buildExcelBuffer(rows: ChildRow[], level: ExcelLevel) {
 
     // Linhas
     for (const r of items) {
+      // 3) Linhas: apenas passe os novos campos
       sheet.addRow({
         publicId: r.publicId ?? '',
         childName: r.childName ?? '',
@@ -108,6 +117,10 @@ export async function buildExcelBuffer(rows: ChildRow[], level: ExcelLevel) {
         age: r.age ?? '',
         gift: r.gift ?? '',
         mother: r.mother ?? '',
+
+        status: r.status ?? '',               // novo
+        statusLabel: r.statusLabel ?? '',     // novo
+
         sponsorName: r.sponsorName ?? '',
         contact: r.contact ?? '',
         method: r.method ?? '',
@@ -119,7 +132,7 @@ export async function buildExcelBuffer(rows: ChildRow[], level: ExcelLevel) {
       });
     }
 
-    sheet.autoFilter = { from: 'A1', to: 'N1' };
+    sheet.autoFilter = { from: 'A1', to: 'P1' };
   }
 
   return wb.xlsx.writeBuffer();
