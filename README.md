@@ -1,98 +1,192 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Amigos de Minas — Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API do sistema de gestão de apadrinhamento da **ONG Amigos de Minas**, responsável por toda a operação de crianças apadrinhadas, padrinhos/madrinhas, campanhas, pontos de coleta e geração das imagens personalizadas usadas nas campanhas.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Construída com **NestJS 11** + **Prisma** sobre **PostgreSQL**, expõe uma API REST consumida pelo [frontend em Next.js](../Amigos_de_Minas-Frontend-master) (área pública de apadrinhamento e painel administrativo).
 
-## Description
+## Sumário
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- [Sobre o projeto](#sobre-o-projeto)
+- [Stack técnica](#stack-técnica)
+- [Módulos da aplicação](#módulos-da-aplicação)
+- [Modelo de dados](#modelo-de-dados)
+- [Como rodar localmente](#como-rodar-localmente)
+- [Variáveis de ambiente](#variáveis-de-ambiente)
+- [Scripts disponíveis](#scripts-disponíveis)
+- [Composição de imagens das campanhas](#composição-de-imagens-das-campanhas)
+- [Migração de dados legados](#migração-de-dados-legados)
+- [Testes](#testes)
+- [Estrutura de pastas](#estrutura-de-pastas)
+- [Roadmap / pontos de atenção](#roadmap--pontos-de-atenção)
 
-## Project setup
+## Sobre o projeto
+
+Este backend foi desenvolvido para dar à equipe da ONG **gestão completa e flexível de toda a operação de apadrinhamento**: cadastro de crianças, cidades, comunidades e escolas, controle do ciclo de vida de cada apadrinhamento (do interesse do padrinho até a entrega do presente), gestão de campanhas sazonais (ex.: Natal) e emissão de relatórios.
+
+Dois pontos de destaque do projeto:
+
+- **Automação da montagem de imagens**: um pipeline de composição de fotos das crianças com as molduras/artes de cada campanha, que antes era feito manualmente (levando semanas) e hoje é gerado em minutos.
+- **Compatibilidade com os dados históricos da ONG**: o modelo de dados foi desenhado para aceitar a importação do que já existia em planilhas, preservando o histórico sem exigir retrabalho de recadastro.
+
+## Stack técnica
+
+- **Runtime/Framework**: [NestJS 11](https://nestjs.com/) sobre Express
+- **Linguagem**: TypeScript 5.7
+- **Banco de dados**: PostgreSQL 16
+- **ORM**: [Prisma 6](https://www.prisma.io/) (`@prisma/client`)
+- **Autenticação**: JWT (access + refresh token) com `@nestjs/passport` / `passport-jwt`, senhas com `bcrypt`
+- **Processamento de imagem**: [`sharp`](https://sharp.pixelplumbing.com/) (composição em camadas, resize, conversão para WebP, máscaras SVG para cantos arredondados, overlay de texto dinâmico)
+- **Upload de arquivos**: `multer`
+- **Geração de planilhas**: [`exceljs`](https://github.com/exceljs/exceljs) (exportações de crianças e apadrinhamentos)
+- **Validação**: `class-validator` / `class-transformer` com `ValidationPipe` global
+- **Testes**: Jest + Supertest
+
+## Módulos da aplicação
+
+| Módulo | Responsabilidade |
+|---|---|
+| `auth` | Registro, login (e-mail ou telefone) e refresh de token JWT |
+| `users` | CRUD administrativo de usuários e papéis (roles) |
+| `profiles` | Perfil complementar do usuário (endereço, profissão, renda, estado civil) |
+| `children` | Cadastro de crianças, filtros, estatísticas, upload de foto, preview dinâmico e importação em massa |
+| `child-images` | Versionamento das imagens processadas de cada criança (original / processada / com moldura) |
+| `campaigns` | CRUD de campanhas e dos layouts/molduras (`CampaignFrame`) usados na composição |
+| `sponsors` | Listagem de padrinhos e madrinhas |
+| `sponsorships` | Ciclo de vida do apadrinhamento: criação, transferência, ativação, encerramento |
+| `cities` / `communities` / `schools` | Hierarquia geográfica (cidade → comunidade → escola), com soft delete |
+| `collection-points` | Pontos físicos de coleta/entrega de doações |
+| `exports` / `modules/exports` | Exportação de crianças e de apadrinhamentos para Excel |
+| `common` | Guards de autenticação e de papéis, decorator `@Roles()`, serviço de storage |
+| `prisma` | Serviço/wrapper injetável do Prisma Client |
+
+## Modelo de dados
+
+Principais entidades (ver [`prisma/schema.prisma`](prisma/schema.prisma)):
+
+- **User** (`ADMIN` / `STAFF` / `SPONSOR`) — com `Profile` 1:1
+- **Child** — a criança apadrinhada, vinculada a `City`, `Community` e `School`
+- **Sponsorship** — o apadrinhamento em si, ligando `Child` + `User` (padrinho) + `Campaign`, com status logístico (`PENDING → IN_PROGRESS → IN_PURCHASE → PACKED → BOXED → AWAITING_DELIVERY → COMPLETED/ENDED/CANCELLED`) e método (`GIFT` ou `PIX`)
+- **Campaign** e **CampaignFrame** — campanhas e seus layouts/molduras de composição de imagem
+- **ChildImage** — cada versão de imagem gerada para uma criança em uma campanha (original, processada, com moldura)
+- **City / Community / School / CollectionPoint** — estrutura geográfica e logística
+
+O schema mantém deliberadamente campos legados (`Child.cityName`, `Child.schoolLegacy`) ao lado das relações normalizadas, para suportar a transição gradual dos dados que vieram de planilhas.
+
+## Como rodar localmente
+
+Pré-requisitos: Node.js 18+, Yarn e Docker (para o banco de dados).
 
 ```bash
-$ yarn install
+# 1. Instalar dependências
+yarn install
+
+# 2. Subir o banco PostgreSQL via Docker
+docker compose up -d
+
+# 3. Configurar variáveis de ambiente (ver seção abaixo)
+cp .env.example .env
+
+# 4. Rodar as migrações do Prisma
+yarn prisma migrate deploy
+
+# 5. (Opcional) Popular o banco com dados iniciais (cidades/comunidades/escolas)
+yarn db:seed
+
+# 6. Subir a API em modo desenvolvimento
+yarn start:dev
 ```
 
-## Compile and run the project
+A API sobe na porta **3050** (fixa em `main.ts`, não configurável por variável de ambiente no momento).
+
+## Variáveis de ambiente
+
+Não há `.env.example` versionado ainda — recomenda-se criar um com as variáveis abaixo, todas lidas diretamente do código:
+
+| Variável | Descrição | Default |
+|---|---|---|
+| `DATABASE_URL` | String de conexão do PostgreSQL | — (obrigatória) |
+| `JWT_ACCESS_SECRET` | Segredo do access token | — (obrigatória) |
+| `JWT_ACCESS_TTL` | Tempo de vida do access token (segundos) | `3600` |
+| `JWT_REFRESH_SECRET` | Segredo do refresh token | — (obrigatória) |
+| `JWT_REFRESH_TTL` | Tempo de vida do refresh token (segundos) | `2592000` (30 dias) |
+| `FRONTEND_ORIGIN` | Origens permitidas para CORS (separadas por vírgula) | todas, se ausente |
+| `UPLOAD_DIR` | Pasta local onde as imagens são armazenadas | `uploads` |
+| `API_PUBLIC_URL` | URL pública usada para montar links de arquivos | `http://localhost:3001` |
+
+> Os arquivos enviados ficam disponíveis publicamente em `/uploads` (servidos via `ServeStaticModule`, com cache de 30 dias).
+
+## Scripts disponíveis
+
+| Comando | Descrição |
+|---|---|
+| `yarn start:dev` | Sobe a API em modo watch |
+| `yarn start:prod` | Sobe a API a partir do build (`dist/`) |
+| `yarn build` | Compila o projeto |
+| `yarn lint` | Lint com autofix (ESLint flat config) |
+| `yarn format` | Formata `src` e `test` com Prettier |
+| `yarn test` | Testes unitários (Jest) |
+| `yarn test:e2e` | Testes end-to-end |
+| `yarn test:cov` | Cobertura de testes |
+| `yarn db:seed` | Popula o banco com cidades/comunidades/escolas reais da ONG (`prisma/seed.cjs`) |
+
+## Composição de imagens das campanhas
+
+O ponto de maior automação do sistema é o pipeline de geração das imagens personalizadas de cada criança para as campanhas (ex.: card de Natal com foto + moldura + nome + presente desejado):
+
+1. **Upload da foto** (`POST /children/:id/photo`) — recebe a foto original, gera uma versão otimizada em **WebP** e, se a campanha tiver uma moldura ativa, já gera a versão final composta.
+2. **Composição em camadas** (via `sharp`) — a foto é redimensionada/recortada conforme a configuração do layout (`fit`, `gravity`, `cornerRadius`, `scale`), a moldura é sobreposta, e textos dinâmicos (nome, idade calculada, presente desejado, cidade, comunidade) são renderizados via SVG sobre a imagem.
+3. **Preview dinâmico** (`GET /children/:id/render`) — permite pré-visualizar a composição em tempo real (sem persistir), aceitando overrides de layout, textos e recorte via query string — usado pelo painel administrativo para ajustar o layout antes de gerar a versão final.
+4. **Versionamento** — cada imagem gerada fica registrada como um `ChildImage`, guardando as URLs do original, do processado e do composto, além do snapshot da configuração usada.
+
+Esse pipeline reduziu um processo que antes era feito manualmente (imagem por imagem, em softwares de edição) — levando semanas por campanha — para um processo de poucos minutos.
+
+## Migração de dados legados
+
+Para acomodar o histórico da ONG, que estava em planilhas, o backend expõe:
+
+- **`POST /children/bulk/commit`** — importação em lote de crianças (upsert por `publicId`), usada para migrar rapidamente os dados já existentes sem exigir recadastro manual.
+- **Campos de compatibilidade no schema** (`cityName`, `schoolLegacy`) que convivem com as relações normalizadas (`City`, `School`), permitindo que dados antigos, digitados como texto livre, continuem válidos enquanto a base é normalizada.
+- **Seeds com dados reais** (`prisma/seed.cjs`, `prisma/seed-collection-points.ts`) — carregam comunidades, escolas e pontos de coleta já existentes da operação da ONG nas cidades atendidas no Norte de Minas.
+- **Exportação para Excel** (`exports/children`, `modules/exports`) — permite que a equipe continue gerando planilhas de acompanhamento a partir dos dados atualizados no sistema, mantendo compatibilidade com o fluxo de trabalho que a ONG já utilizava.
+
+## Testes
 
 ```bash
-# development
-$ yarn run start
-
-# watch mode
-$ yarn run start:dev
-
-# production mode
-$ yarn run start:prod
+yarn test       # unitários
+yarn test:e2e   # end-to-end
+yarn test:cov   # cobertura
 ```
 
-## Run tests
+> Estado atual: o projeto ainda conta apenas com os testes gerados por padrão pelo Nest CLI. Ampliar a cobertura de testes de domínio (crianças, apadrinhamentos, composição de imagem) é um próximo passo recomendado.
 
-```bash
-# unit tests
-$ yarn run test
+## Estrutura de pastas
 
-# e2e tests
-$ yarn run test:e2e
-
-# test coverage
-$ yarn run test:cov
+```
+src/
+├── auth/              # Login, registro e refresh de token
+├── users/              # CRUD de usuários e papéis
+├── profiles/           # Perfil complementar do usuário
+├── children/            # Crianças: CRUD, filtros, estatísticas, fotos
+├── child-images/        # Versionamento e composição de imagens
+├── campaigns/           # Campanhas e layouts/molduras
+├── sponsors/             # Listagem de padrinhos/madrinhas
+├── sponsorships/         # Ciclo de vida do apadrinhamento
+├── cities/ communities/ schools/   # Hierarquia geográfica
+├── collection-points/    # Pontos de coleta/entrega
+├── exports/               # Exportação de crianças para Excel
+├── modules/exports/         # Exportação de apadrinhamentos para Excel
+├── common/                # Guards, decorators, storage
+└── prisma/                # Serviço do Prisma Client
+prisma/
+├── schema.prisma          # Modelo de dados
+├── migrations/             # Histórico de migrações
+├── seed.cjs                # Seed de cidades/comunidades/escolas
+└── seed-collection-points.ts  # Seed de pontos de coleta
 ```
 
-## Deployment
+## Roadmap / pontos de atenção
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ yarn install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- Não há documentação automática da API (Swagger/OpenAPI) — endpoints precisam ser consultados diretamente nos controllers.
+- A porta da aplicação é fixa (`3050`) no código, não configurável por variável de ambiente.
+- Existem duas pastas de exportação (`src/exports/children` e `src/modules/exports`) que podem ser unificadas futuramente.
+- Cobertura de testes automatizados ainda é baixa.
