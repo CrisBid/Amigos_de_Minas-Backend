@@ -18,7 +18,8 @@ export class AuthService {
     const payload = { sub: user.id, email: user.email, roles: user.roles };
     return this.jwt.signAsync(payload, {
       secret: process.env.JWT_ACCESS_SECRET,
-      expiresIn: `${process.env.JWT_ACCESS_TTL || 3600}s`,
+      // segundos (number) — evita depender do tipo literal `${number}s` do jsonwebtoken
+      expiresIn: Number(process.env.JWT_ACCESS_TTL) || 3600,
     });
   }
 
@@ -26,7 +27,7 @@ export class AuthService {
     const payload = { sub: user.id, type: 'refresh' };
     return this.jwt.signAsync(payload, {
       secret: process.env.JWT_REFRESH_SECRET,
-      expiresIn: `${process.env.JWT_REFRESH_TTL || 2592000}s`,
+      expiresIn: Number(process.env.JWT_REFRESH_TTL) || 2592000,
     });
   }
 
