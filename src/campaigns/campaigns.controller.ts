@@ -43,6 +43,35 @@ export class CampaignsController {
     return this.service.update(id, dto);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.service.remove(id);
+  }
+
+  // ---- MIGRAÇÃO SELETIVA DE CRIANÇAS ENTRE CAMPANHAS ----
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @Get(':id/included-children')
+  listIncludedChildren(@Param('id') id: string) {
+    return this.service.listIncludedChildren(id);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @Post(':id/included-children')
+  addIncludedChildren(@Param('id') id: string, @Body() body: { childIds?: string[]; sourceCampaignId?: string }) {
+    return this.service.addIncludedChildren(id, Array.isArray(body?.childIds) ? body.childIds : [], body?.sourceCampaignId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @Delete(':id/included-children')
+  removeIncludedChildren(@Param('id') id: string, @Body() body: { childIds?: string[] }) {
+    return this.service.removeIncludedChildren(id, Array.isArray(body?.childIds) ? body.childIds : []);
+  }
+
   // ---- FRAME UPLOAD ----
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN','STAFF')

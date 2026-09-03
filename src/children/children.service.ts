@@ -157,6 +157,20 @@ export class ChildrenService {
     // —— where base (sempre) —— //
     const where: any = { deletedAt: null };
 
+    // —— pertence à campanha? só entram crianças com foto publicada para ela
+    // OU migradas manualmente para ela (tela de migração seletiva) —— //
+    if (campaignId) {
+      where.AND = [
+        ...(where.AND ?? []),
+        {
+          OR: [
+            { images: { some: { campaignId } } },
+            { campaignIncludes: { some: { campaignId } } },
+          ],
+        },
+      ];
+    }
+
     // —— filtros relacionais por ID —— //
     if (cityId) where.cityId = cityId;
     if (communityId) where.communityId = communityId;
@@ -320,6 +334,18 @@ export class ChildrenService {
       category: { not: null }, // só queremos categorias preenchidas
     };
 
+    if (campaignId) {
+      where.AND = [
+        ...((where.AND as any[]) ?? []),
+        {
+          OR: [
+            { images: { some: { campaignId } } },
+            { campaignIncludes: { some: { campaignId } } },
+          ],
+        },
+      ];
+    }
+
     if (cityId) where.cityId = cityId;
     if (communityId) where.communityId = communityId;
     if (schoolId) where.schoolId = schoolId;
@@ -423,6 +449,64 @@ export class ChildrenService {
       sponsorshipRate: Number(sponsorshipRate),
     };
 
+  }
+
+  /** Estatísticas restritas ao roster de UMA campanha (fotos publicadas + migrações manuais),
+   *  com o status calculado apenas pelos sponsorships DA campanha selecionada. */
+  async statsForCampaign(campaignId: string): Promise<Stats> {
+    const rosterChildren = await this.prisma.child.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { images: { some: { campaignId } } },
+          { campaignIncludes: { some: { campaignId } } },
+        ],
+      },
+      select: { id: true },
+    });
+    const childIds = rosterChildren.map((c) => c.id);
+    const total = childIds.length;
+
+    if (total === 0) {
+      return { total: 0, active: 0, pending: 0, in_progress: 0, available: 0, sponsorshipRate: 0 };
+    }
+
+    const lastByChild = await this.prisma.sponsorship.groupBy({
+      by: ['childId'],
+      where: { childId: { in: childIds }, campaignId },
+      _max: { createdAt: true },
+    });
+
+    if (lastByChild.length === 0) {
+      return { total, active: 0, pending: 0, in_progress: 0, available: total, sponsorshipRate: 0 };
+    }
+
+    const orPairs = lastByChild.map(({ childId, _max }) => ({
+      childId,
+      campaignId,
+      createdAt: _max.createdAt!,
+    }));
+
+    const latest = await this.prisma.sponsorship.findMany({
+      where: { OR: orPairs },
+      select: { status: true },
+    });
+
+    const active = latest.filter((x) => x.status === 'COMPLETED').length;
+    const pending = latest.filter((x) => x.status === 'PENDING').length;
+    const in_progress = latest.filter((x) => ChildrenService.IN_PROGRESS_GROUP.includes(x.status)).length;
+
+    const available = Math.max(0, total - (active + pending + in_progress));
+    const sponsorshipRate = total > 0 ? Math.round((active / total) * 100) : 0;
+
+    return {
+      total: Number(total),
+      active: Number(active),
+      pending: Number(pending),
+      in_progress: Number(in_progress),
+      available: Number(available),
+      sponsorshipRate: Number(sponsorshipRate),
+    };
   }
 
   async statsFiltered({ cityId, communityId, schoolId }: RegionFilter): Promise<Stats> {

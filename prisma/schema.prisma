@@ -102,8 +102,34 @@ model Campaign {
   sponsorships Sponsorship[]
   images ChildImage[]
 
+  // crianças migradas individualmente de outra campanha (seleção manual no painel)
+  includedChildren CampaignChildInclude[]
+
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+}
+
+/**
+ * Migração seletiva de crianças entre campanhas: cada linha diz "a criança X
+ * também aparece na campanha Y", escolhida manualmente (por cidade, comunidade
+ * ou individualmente) na tela de migração do painel admin — sem duplicar dados.
+ */
+model CampaignChildInclude {
+  id               String   @id @default(cuid())
+
+  campaignId       String
+  campaign         Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  childId          String
+  child            Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  // de qual campanha essa criança foi migrada (apenas rastreabilidade/exibição)
+  sourceCampaignId String?
+
+  createdAt        DateTime @default(now())
+
+  @@unique([campaignId, childId])
+  @@index([childId])
 }
 
 model CampaignFrame {
@@ -267,6 +293,7 @@ model Child {
 
   sponsorships Sponsorship[]
   images       ChildImage[]
+  campaignIncludes CampaignChildInclude[]
 
   @@index([cityId, communityId, schoolId])
 }

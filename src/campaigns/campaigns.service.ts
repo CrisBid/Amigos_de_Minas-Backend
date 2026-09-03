@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
@@ -109,6 +109,60 @@ export class CampaignsService {
   }
 
   /**
+   * Migração seletiva de crianças: lista quem já foi incluído manualmente
+   * nesta campanha (vindo de outra campanha), com dados básicos para exibição.
+   */
+  async listIncludedChildren(campaignId: string) {
+    await this.getByIdOrThrow(campaignId);
+    const rows = await this.prisma.campaignChildInclude.findMany({
+      where: { campaignId },
+      include: {
+        child: {
+          select: {
+            id: true, publicId: true, name: true, cityName: true,
+            city: { select: { id: true, name: true } },
+            community: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((r) => ({
+      childId: r.childId,
+      sourceCampaignId: r.sourceCampaignId,
+      includedAt: r.createdAt,
+      child: r.child,
+    }));
+  }
+
+  /** Inclui as crianças selecionadas (por id) nesta campanha. */
+  async addIncludedChildren(campaignId: string, childIds: string[], sourceCampaignId?: string) {
+    await this.getByIdOrThrow(campaignId);
+    const ids = Array.from(new Set((childIds ?? []).filter(Boolean)));
+    if (!ids.length) throw new BadRequestException('Informe ao menos uma criança para migrar.');
+
+    const found = await this.prisma.child.count({ where: { id: { in: ids } } });
+    if (found !== ids.length) throw new BadRequestException('Uma ou mais crianças informadas não existem.');
+
+    await this.prisma.campaignChildInclude.createMany({
+      data: ids.map((childId) => ({ campaignId, childId, sourceCampaignId: sourceCampaignId ?? null })),
+      skipDuplicates: true,
+    });
+
+    return { added: ids.length };
+  }
+
+  /** Remove crianças migradas anteriormente desta campanha (não afeta o cadastro original). */
+  async removeIncludedChildren(campaignId: string, childIds: string[]) {
+    const ids = Array.from(new Set((childIds ?? []).filter(Boolean)));
+    if (!ids.length) return { removed: 0 };
+    const res = await this.prisma.campaignChildInclude.deleteMany({
+      where: { campaignId, childId: { in: ids } },
+    });
+    return { removed: res.count };
+  }
+
+  /**
    * Usado pelo alias POST /campaigns/:id/layout — atualiza os campos de frame/layout.
    */
   updateFrame(id: string, data: { frameKey: string | null; frameUrl: string | null }) {
@@ -127,6 +181,32 @@ export class CampaignsService {
       where: { id },
       data: { frameConfig: cfg as any },
     });
+  }
+
+  /**
+   * Exclui a campanha e seus recursos dependentes (frames/layouts).
+   * Bloqueia a exclusão se já existirem apadrinhamentos vinculados,
+   * para não perder histórico de doações.
+   */
+  async remove(id: string) {
+    await this.getByIdOrThrow(id);
+
+    const sponsorshipsCount = await this.prisma.sponsorship.count({ where: { campaignId: id } });
+    if (sponsorshipsCount > 0) {
+      throw new BadRequestException(
+        'Não é possível excluir: esta campanha já possui apadrinhamentos vinculados. Arquive-a em vez de excluir.',
+      );
+    }
+
+    await this.prisma.$transaction([
+      // remove o vínculo de layout ativo antes de apagar os frames
+      this.prisma.campaign.update({ where: { id }, data: { activeFrameId: null } }),
+      this.prisma.campaignFrame.deleteMany({ where: { campaignId: id } }),
+      this.prisma.childImage.updateMany({ where: { campaignId: id }, data: { campaignId: null } }),
+      this.prisma.campaign.delete({ where: { id } }),
+    ]);
+
+    return { ok: true };
   }
 
   /**

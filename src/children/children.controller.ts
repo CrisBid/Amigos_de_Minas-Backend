@@ -133,9 +133,20 @@ export class ChildrenController {
     return this.service.get(id);
   }
 
-  /** Estatísticas globais (total, active, pending, available) considerando o ÚLTIMO status por criança */
+  /** Estatísticas globais, ou restritas ao roster de UMA campanha se `campaignId` vier */
   @Get('stats/all')
-  async stats() {
+  async stats(@Query('campaignId') campaignId?: string) {
+    if (campaignId) {
+      const s = await this.service.statsForCampaign(campaignId);
+      return {
+        total: s.total ?? 0,
+        active: s.active ?? 0,
+        pending: s.pending ?? 0,
+        in_progress: s.in_progress ?? 0,
+        available: s.available ?? Math.max(0, (s.total ?? 0) - ((s.active ?? 0) + (s.pending ?? 0))),
+        sponsorshipRate: s.sponsorshipRate ?? 0,
+      };
+    }
     const s = await this.service.stats();
     // força um objeto simples (sem undefined)
     return {
