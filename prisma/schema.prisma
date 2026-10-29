@@ -105,6 +105,9 @@ model Campaign {
   // crianças migradas individualmente de outra campanha (seleção manual no painel)
   includedChildren CampaignChildInclude[]
 
+  // presente pedido por cada criança nesta campanha
+  childGifts ChildCampaignGift[]
+
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
@@ -130,6 +133,28 @@ model CampaignChildInclude {
 
   @@unique([campaignId, childId])
   @@index([childId])
+}
+
+/**
+ * Presente pedido pela criança em cada campanha. `Child.wantedGift` continua
+ * sendo o presente atual (última campanha); aqui fica o histórico por campanha.
+ */
+model ChildCampaignGift {
+  id         String   @id @default(cuid())
+
+  childId    String
+  child      Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  wantedGift String
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([childId, campaignId])
+  @@index([campaignId])
 }
 
 model CampaignFrame {
@@ -294,6 +319,7 @@ model Child {
   sponsorships Sponsorship[]
   images       ChildImage[]
   campaignIncludes CampaignChildInclude[]
+  campaignGifts    ChildCampaignGift[]
 
   @@index([cityId, communityId, schoolId])
 }

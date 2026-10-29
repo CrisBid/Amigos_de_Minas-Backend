@@ -2,8 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
-// Se você tiver os tipos do Prisma gerados, pode descomentar para ter autocomplete de enums etc.
-// import { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 type ListPagedParams = {
   status?: string;
@@ -11,6 +10,13 @@ type ListPagedParams = {
   pageSize?: number;
   q?: string;
 };
+
+type MigrationItem = { childId: string; wantedGift?: string | null };
+
+function bestImageUrl(img?: { framedUrl: string | null; processedUrl: string | null; originalUrl: string } | null) {
+  if (!img) return null;
+  return img.framedUrl || img.processedUrl || img.originalUrl || null;
+}
 
 @Injectable()
 export class CampaignsService {
@@ -122,32 +128,130 @@ export class CampaignsService {
             id: true, publicId: true, name: true, cityName: true,
             city: { select: { id: true, name: true } },
             community: { select: { id: true, name: true } },
+            campaignGifts: { where: { campaignId }, select: { wantedGift: true } },
           },
         },
       },
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r) => ({
+    return rows.map(({ child: { campaignGifts, ...child }, ...r }) => ({
       childId: r.childId,
       sourceCampaignId: r.sourceCampaignId,
       includedAt: r.createdAt,
-      child: r.child,
+      wantedGift: campaignGifts[0]?.wantedGift ?? null,
+      child,
     }));
   }
 
-  /** Inclui as crianças selecionadas (por id) nesta campanha. */
-  async addIncludedChildren(campaignId: string, childIds: string[], sourceCampaignId?: string) {
+  /**
+   * Pré-visualização da migração colada da planilha: resolve os IDs públicos
+   * e diz, para cada criança, se ela está na origem, se já está no destino,
+   * qual o presente e a foto atuais.
+   */
+  async previewMigration(campaignId: string, publicIds: number[], sourceCampaignId?: string) {
     await this.getByIdOrThrow(campaignId);
-    const ids = Array.from(new Set((childIds ?? []).filter(Boolean)));
+    const ids = Array.from(new Set((publicIds ?? []).map((n) => parseInt(String(n), 10)).filter(Number.isFinite)));
+    if (!ids.length) return { items: [], notFound: [] };
+
+    const scope = [campaignId, ...(sourceCampaignId ? [sourceCampaignId] : [])];
+    const children = await this.prisma.child.findMany({
+      where: { publicId: { in: ids }, deletedAt: null },
+      select: {
+        id: true, publicId: true, name: true, wantedGift: true, photoUrl: true, cityName: true,
+        city: { select: { id: true, name: true } },
+        community: { select: { id: true, name: true } },
+        images: {
+          where: { campaignId: { in: scope } },
+          select: { campaignId: true, framedUrl: true, processedUrl: true, originalUrl: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        campaignIncludes: { where: { campaignId: { in: scope } }, select: { campaignId: true } },
+        campaignGifts: { where: { campaignId: { in: scope } }, select: { campaignId: true, wantedGift: true } },
+      },
+    });
+
+    const items = children.map((c) => {
+      const inCampaign = (id?: string) =>
+        !!id && (c.images.some((i) => i.campaignId === id) || c.campaignIncludes.some((i) => i.campaignId === id));
+      const giftIn = (id?: string) => c.campaignGifts.find((g) => g.campaignId === id)?.wantedGift ?? null;
+      const imageIn = (id?: string) => c.images.find((i) => i.campaignId === id) ?? null;
+
+      return {
+        id: c.id,
+        publicId: c.publicId,
+        name: c.name,
+        cityName: c.cityName,
+        city: c.city,
+        community: c.community,
+        inSource: inCampaign(sourceCampaignId),
+        alreadyInTarget: inCampaign(campaignId),
+        currentGift: giftIn(sourceCampaignId) ?? c.wantedGift ?? null,
+        targetGift: giftIn(campaignId),
+        currentPhotoUrl: bestImageUrl(imageIn(sourceCampaignId)) ?? c.photoUrl ?? null,
+        targetPhotoUrl: bestImageUrl(imageIn(campaignId)),
+      };
+    });
+
+    const foundIds = new Set(children.map((c) => c.publicId));
+    return { items, notFound: ids.filter((id) => !foundIds.has(id)) };
+  }
+
+  /**
+   * Inclui as crianças selecionadas nesta campanha. Quando `items` traz o
+   * presente da nova campanha, ele é gravado no histórico (ChildCampaignGift)
+   * e passa a ser o presente atual da criança; o presente anterior é guardado
+   * na campanha de origem, se ainda não estiver lá.
+   */
+  async addIncludedChildren(campaignId: string, childIds: string[], sourceCampaignId?: string, items: MigrationItem[] = []) {
+    await this.getByIdOrThrow(campaignId);
+    const ids = Array.from(new Set([...(childIds ?? []), ...items.map((i) => i.childId)].filter(Boolean)));
     if (!ids.length) throw new BadRequestException('Informe ao menos uma criança para migrar.');
 
-    const found = await this.prisma.child.count({ where: { id: { in: ids } } });
-    if (found !== ids.length) throw new BadRequestException('Uma ou mais crianças informadas não existem.');
-
-    await this.prisma.campaignChildInclude.createMany({
-      data: ids.map((childId) => ({ campaignId, childId, sourceCampaignId: sourceCampaignId ?? null })),
-      skipDuplicates: true,
+    const children = await this.prisma.child.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        wantedGift: true,
+        images: sourceCampaignId ? { where: { campaignId: sourceCampaignId }, select: { id: true }, take: 1 } : undefined,
+        campaignIncludes: sourceCampaignId ? { where: { campaignId: sourceCampaignId }, select: { id: true } } : undefined,
+        campaignGifts: sourceCampaignId ? { where: { campaignId: sourceCampaignId }, select: { id: true } } : undefined,
+      },
     });
+    if (children.length !== ids.length) throw new BadRequestException('Uma ou mais crianças informadas não existem.');
+    const byId = new Map(children.map((c) => [c.id, c]));
+
+    const giftOps = items.flatMap(({ childId, wantedGift }) => {
+      const gift = String(wantedGift ?? '').trim();
+      if (!gift) return [];
+      const child = byId.get(childId)!;
+      const ops: Prisma.PrismaPromise<unknown>[] = [];
+
+      // guarda o presente anterior na campanha de origem antes de sobrescrever
+      const inSource = (child.images?.length ?? 0) > 0 || (child.campaignIncludes?.length ?? 0) > 0;
+      if (sourceCampaignId && inSource && !child.campaignGifts?.length && child.wantedGift?.trim()) {
+        ops.push(this.prisma.childCampaignGift.create({
+          data: { childId, campaignId: sourceCampaignId, wantedGift: child.wantedGift.trim() },
+        }));
+      }
+
+      ops.push(
+        this.prisma.childCampaignGift.upsert({
+          where: { childId_campaignId: { childId, campaignId } },
+          create: { childId, campaignId, wantedGift: gift },
+          update: { wantedGift: gift },
+        }),
+        this.prisma.child.update({ where: { id: childId }, data: { wantedGift: gift } }),
+      );
+      return ops;
+    });
+
+    await this.prisma.$transaction([
+      this.prisma.campaignChildInclude.createMany({
+        data: ids.map((childId) => ({ campaignId, childId, sourceCampaignId: sourceCampaignId ?? null })),
+        skipDuplicates: true,
+      }),
+      ...giftOps,
+    ]);
 
     return { added: ids.length };
   }
@@ -156,9 +260,15 @@ export class CampaignsService {
   async removeIncludedChildren(campaignId: string, childIds: string[]) {
     const ids = Array.from(new Set((childIds ?? []).filter(Boolean)));
     if (!ids.length) return { removed: 0 };
-    const res = await this.prisma.campaignChildInclude.deleteMany({
-      where: { campaignId, childId: { in: ids } },
-    });
+    const [res] = await this.prisma.$transaction([
+      this.prisma.campaignChildInclude.deleteMany({
+        where: { campaignId, childId: { in: ids } },
+      }),
+      // o presente só pertence à campanha enquanto a criança faz parte dela (foto publicada mantém)
+      this.prisma.childCampaignGift.deleteMany({
+        where: { campaignId, childId: { in: ids }, child: { images: { none: { campaignId } } } },
+      }),
+    ]);
     return { removed: res.count };
   }
 

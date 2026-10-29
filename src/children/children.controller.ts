@@ -133,6 +133,14 @@ export class ChildrenController {
     return this.service.get(id);
   }
 
+  /** Histórico: campanhas de que a criança participou, com presente, foto e apadrinhamentos */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @Get(':id/campaigns')
+  campaignHistory(@Param('id') id: string) {
+    return this.service.campaignHistory(id);
+  }
+
   /** Estatísticas globais, ou restritas ao roster de UMA campanha se `campaignId` vier */
   @Get('stats/all')
   async stats(@Query('campaignId') campaignId?: string) {
@@ -455,15 +463,26 @@ export class ChildrenController {
 
       const exists = await this.prisma.child.findUnique({ where: { publicId: pid } });
 
+      let saved: { id: string };
       if (exists) {
-        await this.prisma.child.update({
+        saved = await this.prisma.child.update({
           where: { publicId: pid },
           data,
         });
         updated.push(pid);
       } else {
-        await this.prisma.child.create({ data });
+        saved = await this.prisma.child.create({ data });
         created.push(pid);
+      }
+
+      // histórico: presente pedido nesta campanha
+      const gift = String(c.wantedGift ?? '').trim();
+      if (context.campaignId && gift) {
+        await this.prisma.childCampaignGift.upsert({
+          where: { childId_campaignId: { childId: saved.id, campaignId: context.campaignId } },
+          create: { childId: saved.id, campaignId: context.campaignId, wantedGift: gift },
+          update: { wantedGift: gift },
+        });
       }
       // (opcional) se sua modelagem usa tabelas-ponte N:N, em vez de FKs diretas:
       /*

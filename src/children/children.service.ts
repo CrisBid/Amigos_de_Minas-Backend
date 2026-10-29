@@ -268,8 +268,18 @@ export class ChildrenService {
             orderBy: { createdAt: 'desc' },
             take: 1,
           } as Prisma.Child$sponsorshipsArgs),
+        // presente específico desta campanha (histórico), quando houver
+        ...(campaignId ? { campaignGifts: { where: { campaignId }, select: { wantedGift: true } } } : {}),
       },
     });
+
+    if (campaignId) {
+      for (const c of children as any[]) {
+        const gift = c.campaignGifts?.[0]?.wantedGift;
+        if (gift) c.wantedGift = gift;
+        delete c.campaignGifts;
+      }
+    }
 
     // —— Enriquecimento por scan de FS apenas para itens desta página —— //
     if (campaignId && scanFs) {
@@ -323,6 +333,71 @@ export class ChildrenService {
         sponsorships: true,
         images: true,
       }
+    });
+  }
+
+  /**
+   * Histórico da criança: todas as campanhas de que participou (foto publicada,
+   * migração ou apadrinhamento), com o presente, a foto e os apadrinhamentos de cada uma.
+   */
+  async campaignHistory(childId: string) {
+    const child = await this.prisma.child.findUnique({
+      where: { id: childId },
+      select: {
+        id: true,
+        wantedGift: true,
+        photoUrl: true,
+        images: {
+          where: { campaignId: { not: null } },
+          select: { campaignId: true, framedUrl: true, processedUrl: true, originalUrl: true, createdAt: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        campaignIncludes: { select: { campaignId: true, sourceCampaignId: true, createdAt: true } },
+        campaignGifts: { select: { campaignId: true, wantedGift: true, updatedAt: true } },
+        sponsorships: {
+          select: {
+            id: true, campaignId: true, status: true, method: true, createdAt: true,
+            sponsor: { select: { id: true, name: true, email: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    if (!child) throw new NotFoundException('Criança não encontrada');
+
+    const campaignIds = new Set<string>([
+      ...child.images.map((i) => i.campaignId!),
+      ...child.campaignIncludes.map((i) => i.campaignId),
+      ...child.campaignIncludes.map((i) => i.sourceCampaignId).filter((id): id is string => !!id),
+      ...child.campaignGifts.map((g) => g.campaignId),
+      ...child.sponsorships.map((s) => s.campaignId),
+    ]);
+
+    const campaigns = await this.prisma.campaign.findMany({
+      where: { id: { in: Array.from(campaignIds) } },
+      select: { id: true, name: true, year: true, status: true, startDate: true },
+      orderBy: [{ year: 'desc' }, { startDate: 'desc' }],
+    });
+    const nameById = new Map(campaigns.map((c) => [c.id, c.name]));
+
+    // sem nenhum registro por campanha (dados anteriores ao histórico), o presente atual é o único conhecido
+    const hasGiftHistory = child.campaignGifts.length > 0;
+
+    return campaigns.map((campaign) => {
+      const image = child.images.find((i) => i.campaignId === campaign.id);
+      const include = child.campaignIncludes.find((i) => i.campaignId === campaign.id);
+      const gift = child.campaignGifts.find((g) => g.campaignId === campaign.id);
+      return {
+        campaign,
+        wantedGift: gift?.wantedGift ?? (hasGiftHistory ? null : child.wantedGift ?? null),
+        giftFromHistory: !!gift,
+        photoUrl: image ? image.framedUrl || image.processedUrl || image.originalUrl : null,
+        hasPhoto: !!image,
+        migratedFrom: include
+          ? { id: include.sourceCampaignId, name: include.sourceCampaignId ? nameById.get(include.sourceCampaignId) ?? null : null, at: include.createdAt }
+          : null,
+        sponsorships: child.sponsorships.filter((s) => s.campaignId === campaign.id),
+      };
     });
   }
 

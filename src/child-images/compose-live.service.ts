@@ -275,6 +275,7 @@ export class ComposeLiveService {
         city: { select: { name: true } },
         // se não houver relação community na sua modelagem, remova esta linha
         community: { select: { name: true } } as any,
+        campaignGifts: { where: { campaignId: camp.id }, select: { wantedGift: true } },
       },
     });
 
@@ -284,7 +285,7 @@ export class ComposeLiveService {
       name: childFull?.name ?? child.name ?? '',
       publicId: String(childFull?.publicId ?? child.publicId ?? ''),
       age,
-      wantedGift: childFull?.wantedGift ?? child.wantedGift ?? '',
+      wantedGift: (childFull as any)?.campaignGifts?.[0]?.wantedGift ?? childFull?.wantedGift ?? child.wantedGift ?? '',
       cityName: childFull?.city?.name ?? (child as any).cityName ?? '',
       communityName: (childFull as any)?.community?.name ?? (child as any).communityName ?? '',
     };
