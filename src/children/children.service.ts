@@ -664,8 +664,9 @@ export class ChildrenService {
     };
   }
 
-  /** NOVO — retorna: geral + por cidade + por comunidade (tudo em um único payload) */
-  async statsOverview(): Promise<{
+  /** NOVO — retorna: geral + por cidade + por comunidade (tudo em um único payload).
+   *  Com `campaignId`, só as crianças da campanha e só os apadrinhamentos dela. */
+  async statsOverview(campaignId?: string): Promise<{
     general: Totals;
     byCity: CityRow[];
     byCommunity: CommunityRow[];
@@ -677,6 +678,12 @@ export class ChildrenService {
       childWhere.deletedAt = null;
     } catch {
       // ignore
+    }
+    if (campaignId) {
+      childWhere.OR = [
+        { images: { some: { campaignId } } },
+        { campaignIncludes: { some: { campaignId } } },
+      ];
     }
 
     const children = await this.prisma.child.findMany({
@@ -699,7 +706,7 @@ export class ChildrenService {
     if (childIds.length > 0) {
       const lastByChild = await this.prisma.sponsorship.groupBy({
         by: ['childId'],
-        where: { childId: { in: childIds } },
+        where: { childId: { in: childIds }, ...(campaignId ? { campaignId } : {}) },
         _max: { createdAt: true },
       });
 
@@ -707,6 +714,7 @@ export class ChildrenService {
         const orPairs = lastByChild.map(({ childId, _max }) => ({
           childId,
           createdAt: _max.createdAt!,
+          ...(campaignId ? { campaignId } : {}),
         }));
 
         const latest = await this.prisma.sponsorship.findMany({

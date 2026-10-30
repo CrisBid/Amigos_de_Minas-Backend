@@ -46,6 +46,11 @@ export class ExportSponsorshipsQueryDto {
   @IsOptional()
   status?: string;
 
+  /** opcional: só os apadrinhamentos desta campanha */
+  @IsString()
+  @IsOptional()
+  campaignId?: string;
+
   /** ex: ?method=PIX,GIFT */
   @IsString()
   @IsOptional()

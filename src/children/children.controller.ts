@@ -169,8 +169,8 @@ export class ChildrenController {
 
   /** NOVA rota: tudo em um único payload (geral + por cidade + por comunidade) */
   @Get('stats/overview')
-  async statsOverview() {
-    return this.service.statsOverview();
+  async statsOverview(@Query('campaignId') campaignId?: string) {
+    return this.service.statsOverview(campaignId || undefined);
   }
 
   /** Estatísticas filtradas por query (?cityId=...&communityId=...&schoolId=...) */

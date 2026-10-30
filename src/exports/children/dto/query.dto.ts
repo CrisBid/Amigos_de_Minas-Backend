@@ -32,6 +32,11 @@ export class ChildrenExportQueryDto {
   @IsOptional()
   communityId?: string;
 
+  /** opcional: só as crianças desta campanha, com o vínculo, ID e presente dela */
+  @IsString()
+  @IsOptional()
+  campaignId?: string;
+
   /** quando level = selection (ids de crianças) — separados por vírgula, espaço ou quebra de linha */
   @IsString()
   @IsOptional()

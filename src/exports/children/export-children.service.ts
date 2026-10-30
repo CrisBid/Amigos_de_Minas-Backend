@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ChildrenExportQueryDto, BindFilter, ExportLevel } from './dto/query.dto';
 import { buildChildrenExcel, ChildRow } from './utils/excel.util';
 import { SponsorshipStatus } from '@prisma/client'; // 👈 use o enum do Prisma
+import { applyCampaignData, campaignDataSelect } from '../../common/child-campaign-data';
 
 function calcAge(birth: Date | null): number | null {
   if (!birth) return null;
@@ -49,11 +50,22 @@ export class ChildrenExportService {
       if (ids.length) whereChild.id = { in: ids };
     }
 
+    // campanha: só as crianças dela (foto publicada ou migradas) e só os vínculos dela
+    const campaignId = q.campaignId || undefined;
+    if (campaignId) {
+      whereChild.deletedAt = null;
+      whereChild.OR = [
+        { images: { some: { campaignId } } },
+        { campaignIncludes: { some: { campaignId } } },
+      ];
+    }
+    const bindWhere = { status: { in: CHILD_BIND_STATUSES }, ...(campaignId ? { campaignId } : {}) };
+
     // filtro por vinculação (apadrinhado / não apadrinhado)
     if (q.bind === BindFilter.SPONSORED) {
-      whereChild.sponsorships = { some: { status: { in: CHILD_BIND_STATUSES } } };
+      whereChild.sponsorships = { some: bindWhere };
     } else if (q.bind === BindFilter.UNSPONSORED) {
-      whereChild.sponsorships = { none: { status: { in: CHILD_BIND_STATUSES } } };
+      whereChild.sponsorships = { none: bindWhere };
     }
 
     const children = await this.prisma.child.findMany({
@@ -73,9 +85,12 @@ export class ChildrenExportService {
         community: { select: { id: true, publicId: true, name: true } },
         school: { select: { id: true, publicId: true, name: true } },
 
+        // ID e presente por campanha
+        campaignData: campaignDataSelect,
+
         // pega o vínculo mais recente que conte como "ocupado"
         sponsorships: {
-          where: { status: { in: CHILD_BIND_STATUSES } },
+          where: bindWhere,
           orderBy: { createdAt: 'desc' },
           take: 1,
           select: {
@@ -97,7 +112,7 @@ export class ChildrenExportService {
     });
 
     // mapeia para linhas
-    const rows: ChildRow[] = children.map(ch => {
+    const rows: ChildRow[] = children.map(c => applyCampaignData(c, campaignId)).map(ch => {
       const birthDate = ch.birthDate ? new Date(ch.birthDate) : null;
       const age = ch.age ?? calcAge(birthDate);
 

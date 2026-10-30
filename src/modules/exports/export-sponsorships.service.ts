@@ -55,6 +55,7 @@ export class ExportSponsorshipsService {
     const where: any = {};
     if (statusList) where.status = { in: statusList };
     if (methodList) where.method = { in: methodList };
+    if (query.campaignId) where.campaignId = query.campaignId;
 
     // Níveis/filtros — agora direto da CRIANÇA (cityId/communityId)
     switch (query.level) {
