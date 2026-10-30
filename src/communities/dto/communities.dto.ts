@@ -14,6 +14,7 @@ export class CreateCommunityDto {
 }
 
 export class UpdateCommunityDto {
+  @IsOptional() @IsString() cityId?: string;
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() slug?: string;
   @IsOptional() @IsString() description?: string;

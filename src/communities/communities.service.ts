@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { CreateCommunityDto, UpdateCommunityDto, QueryCommunitiesDto } from './dto/communities.dto';
@@ -63,15 +63,45 @@ export class CommunitiesService {
     const exists = await this.prisma.community.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Community not found');
 
-    return this.prisma.community.update({
+    const cityId = dto.cityId || exists.cityId;
+    const name = dto.name?.trim() || exists.name;
+    const cityChanged = cityId !== exists.cityId;
+
+    let city: { id: string; name: string } | null = null;
+    if (cityChanged) {
+      city = await this.prisma.city.findUnique({ where: { id: cityId }, select: { id: true, name: true } });
+      if (!city) throw new BadRequestException('Cidade não encontrada.');
+    }
+
+    // nome é único por cidade
+    if (cityChanged || name !== exists.name) {
+      const clash = await this.prisma.community.findFirst({ where: { cityId, name, id: { not: id } }, select: { id: true } });
+      if (clash) throw new BadRequestException(`Já existe uma comunidade "${name}" nesta cidade.`);
+    }
+    if (dto.publicId != null && dto.publicId !== exists.publicId) {
+      const clash = await this.prisma.community.findFirst({ where: { publicId: dto.publicId, id: { not: id } }, select: { id: true } });
+      if (clash) throw new BadRequestException(`O ID público ${dto.publicId} já pertence a outra comunidade.`);
+    }
+
+    const updateCommunity = this.prisma.community.update({
       where: { id },
       data: {
-        name: dto.name ?? undefined,
+        cityId,
+        name,
         slug: dto.slug ?? undefined,
         description: dto.description ?? undefined,
         publicId: dto.publicId ?? undefined,
       },
     });
+    if (!cityChanged) return updateCommunity;
+
+    // mudou de cidade: crianças e escolas da comunidade vão junto
+    const [updated] = await this.prisma.$transaction([
+      updateCommunity,
+      this.prisma.child.updateMany({ where: { communityId: id }, data: { cityId, cityName: city!.name } }),
+      this.prisma.school.updateMany({ where: { communityId: id }, data: { cityId } }),
+    ]);
+    return updated;
   }
 
   async softDelete(id: string) {
