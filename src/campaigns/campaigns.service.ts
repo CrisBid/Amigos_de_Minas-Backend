@@ -185,7 +185,7 @@ export class CampaignsService {
         where: { deletedAt: null, ...(cityId ? { cityId } : {}), ...(communityId ? { communityId } : {}) },
         orderBy: { name: 'asc' },
         select: {
-          id: true, publicId: true, name: true, birthDate: true, motherName: true,
+          id: true, publicId: true, name: true, birthDate: true, age: true, motherName: true,
           wantedGift: true, photoUrl: true, cityName: true,
           city: { select: { id: true, name: true } },
           community: { select: { id: true, name: true } },
@@ -214,6 +214,7 @@ export class CampaignsService {
         id: c.id,
         name: c.name,
         birthDate: c.birthDate,
+        age: c.age,
         motherName: c.motherName,
         cityName: c.cityName,
         city: c.city,
