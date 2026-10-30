@@ -120,9 +120,16 @@ export class ComposeLiveService {
       (Number.isFinite(nCamp) ? await this.prisma.campaign.findFirst({ where: { publicId: nCamp } }) : null);
     if (!camp) throw new Error('campaign_not_found');
 
-    // --- Frame/layout ativo ou forçado
+    // --- Frame/layout: forçado, o da cidade da criança nesta campanha, ou o ativo
     let frame = null as any;
     if (layoutId) frame = await this.prisma.campaignFrame.findUnique({ where: { id: layoutId } });
+    if (!frame && child.cityId) {
+      const byCity = await this.prisma.campaignCityLayout.findUnique({
+        where: { campaignId_cityId: { campaignId: camp.id, cityId: child.cityId } },
+        include: { frame: true },
+      });
+      frame = byCity?.frame ?? null;
+    }
     if (!frame && (camp as any).activeFrameId) {
       frame = await this.prisma.campaignFrame.findUnique({ where: { id: (camp as any).activeFrameId } });
     }

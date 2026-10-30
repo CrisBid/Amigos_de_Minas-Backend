@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/storage/storage.service';
 
@@ -84,5 +84,45 @@ export class CampaignFramesService {
 
   async getById(id: string) {
     return this.prisma.campaignFrame.findUnique({ where: { id } });
+  }
+
+  // ---- layout por cidade ----
+
+  listCityLayouts(campaignId: string) {
+    return this.prisma.campaignCityLayout.findMany({
+      where: { campaignId },
+      select: { cityId: true, frameId: true },
+    });
+  }
+
+  /** Define o layout da cidade nesta campanha; `frameId` vazio volta para o layout ativo da campanha. */
+  async setCityLayout(campaignId: string, cityId: string, frameId?: string | null) {
+    if (!frameId) {
+      await this.prisma.campaignCityLayout.deleteMany({ where: { campaignId, cityId } });
+      return { cityId, frameId: null };
+    }
+    const frame = await this.prisma.campaignFrame.findUnique({ where: { id: frameId }, select: { campaignId: true } });
+    if (!frame || frame.campaignId !== campaignId) throw new BadRequestException('Layout não pertence a esta campanha.');
+    const city = await this.prisma.city.findUnique({ where: { id: cityId }, select: { id: true } });
+    if (!city) throw new NotFoundException('Cidade não encontrada');
+
+    await this.prisma.campaignCityLayout.upsert({
+      where: { campaignId_cityId: { campaignId, cityId } },
+      create: { campaignId, cityId, frameId },
+      update: { frameId },
+    });
+    return { cityId, frameId };
+  }
+
+  /** Layout para montar a foto de uma criança: o da cidade dela nesta campanha, senão o ativo da campanha. */
+  async resolveForChild(campaignId: string, cityId?: string | null) {
+    if (cityId) {
+      const byCity = await this.prisma.campaignCityLayout.findUnique({
+        where: { campaignId_cityId: { campaignId, cityId } },
+        include: { frame: true },
+      });
+      if (byCity?.frame) return byCity.frame;
+    }
+    return this.getActiveForCampaign(campaignId);
   }
 }

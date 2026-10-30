@@ -346,7 +346,7 @@ export class ChildrenController {
     const campaignFolder = String((campaign as any).publicId ?? campaign.id);
     const cityFolder = String((city as any)?.publicId ?? city?.id ?? 'no-city');
 
-    // --- escolher layout: id específico OU ativo da campanha (com fallback retro) ---
+    // --- escolher layout: id específico OU o da cidade da criança OU ativo da campanha (com fallback retro) ---
     let frameToUse:
       | { id: string; key: string; url: string; config: any }
       | null = null;
@@ -357,8 +357,8 @@ export class ChildrenController {
     }
 
     if (!frameToUse) {
-      const active = await this.campaignFrames.getActiveForCampaign(campaign.id);
-      if (active) frameToUse = { id: active.id, key: active.key, url: active.url, config: active.config };
+      const resolved = await this.campaignFrames.resolveForChild(campaign.id, child.cityId);
+      if (resolved) frameToUse = { id: resolved.id, key: resolved.key, url: resolved.url, config: resolved.config };
     }
 
     // cria registro usando o service (salva original, processed e framed)
@@ -369,6 +369,8 @@ export class ChildrenController {
     } catch {
       // se vier inválido, ignore
     }
+    // sem Config enviado, usa a configuração do próprio layout escolhido
+    if (!composeConfig && frameToUse?.config) composeConfig = frameToUse.config;
 
     const imgRecord = await this.childImages.createFromUpload({
       

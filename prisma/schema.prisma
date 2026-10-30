@@ -108,6 +108,9 @@ model Campaign {
   // ID e presente de cada criança nesta campanha
   childData ChildCampaignData[]
 
+  // layout usado em cada cidade (sem registro = layout ativo da campanha)
+  cityLayouts CampaignCityLayout[]
+
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
@@ -186,6 +189,31 @@ model CampaignFrame {
 
   @@index([campaignId, active])
   Campaign Campaign[] @relation("CampaignActiveFrame")
+
+  cityLayouts CampaignCityLayout[]
+}
+
+/**
+ * Layout (moldura) de uma cidade dentro da campanha. Ao montar a foto de uma
+ * criança, vale o layout da cidade dela; sem registro, o layout ativo da campanha.
+ */
+model CampaignCityLayout {
+  id         String        @id @default(cuid())
+
+  campaignId String
+  campaign   Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  cityId     String
+  city       City          @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  frameId    String
+  frame      CampaignFrame @relation(fields: [frameId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([campaignId, cityId])
+  @@index([frameId])
 }
 
 
@@ -200,6 +228,7 @@ model City {
   children     Child[]
   communities  Community[]
   schools      School[]
+  campaignLayouts CampaignCityLayout[]
 
   @@index([name, state])
 }

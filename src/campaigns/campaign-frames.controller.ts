@@ -1,6 +1,6 @@
 import {
   Controller, Get, Param, Post, UseGuards, UseInterceptors, UploadedFile,
-  Body, Patch, Delete, Query, BadRequestException
+  Body, Patch, Put, Delete, Query, BadRequestException
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -47,6 +47,20 @@ export class CampaignFramesController {
     const cfg = body?.config ? JSON.parse(body.config) : undefined;
     const created = await this.frames.upload({ id: campaign.id, folder }, file, body?.name, cfg);
     return created;
+  }
+
+  // GET /campaigns/:id/city-layouts  → [{ cityId, frameId }]
+  @Roles('ADMIN','STAFF')
+  @Get('campaigns/:id/city-layouts')
+  listCityLayouts(@Param('id') id: string) {
+    return this.frames.listCityLayouts(id);
+  }
+
+  // PUT /campaigns/:id/city-layouts/:cityId  { frameId | null }
+  @Roles('ADMIN','STAFF')
+  @Put('campaigns/:id/city-layouts/:cityId')
+  setCityLayout(@Param('id') id: string, @Param('cityId') cityId: string, @Body() body: { frameId?: string | null }) {
+    return this.frames.setCityLayout(id, cityId, body?.frameId ?? null);
   }
 
   // PATCH /campaign-frames/:frameId  (name/sort/config)
