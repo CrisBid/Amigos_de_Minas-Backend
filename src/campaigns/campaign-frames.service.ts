@@ -86,6 +86,22 @@ export class CampaignFramesService {
     return this.prisma.campaignFrame.findUnique({ where: { id } });
   }
 
+  /**
+   * Grava a composição nas fotos já enviadas com este layout (na campanha dele),
+   * para elas passarem a ser montadas com o enquadramento novo.
+   */
+  async applyConfigToImages(frameId: string, config: any) {
+    const frame = await this.prisma.campaignFrame.findUnique({ where: { id: frameId } });
+    if (!frame) throw new NotFoundException('Layout não encontrado');
+    const cfg = config ?? frame.config;
+    if (!cfg) throw new BadRequestException('Layout sem enquadramento para aplicar.');
+    const res = await this.prisma.childImage.updateMany({
+      where: { campaignId: frame.campaignId, layoutKey: frame.key },
+      data: { Config: cfg },
+    });
+    return { updated: res.count };
+  }
+
   // ---- layout por cidade ----
 
   listCityLayouts(campaignId: string) {

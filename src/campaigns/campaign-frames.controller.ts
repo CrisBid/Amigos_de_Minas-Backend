@@ -71,6 +71,13 @@ export class CampaignFramesController {
     return this.frames.updateMeta(frameId, { name: body?.name, sort: body?.sort, config: cfg });
   }
 
+  // POST /campaign-frames/:frameId/apply-to-images  { config? } → grava o enquadramento nas fotos já enviadas com o layout
+  @Roles('ADMIN','STAFF')
+  @Post('campaign-frames/:frameId/apply-to-images')
+  applyToImages(@Param('frameId') frameId: string, @Body() body: { config?: any }) {
+    return this.frames.applyConfigToImages(frameId, body?.config);
+  }
+
   // POST /campaign-frames/:frameId/set-active
   @Roles('ADMIN','STAFF')
   @Post('campaign-frames/:frameId/set-active')

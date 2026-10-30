@@ -225,6 +225,11 @@ export class CampaignsService {
         currentGift: dataIn(sourceCampaignId)?.wantedGift ?? c.wantedGift ?? null,
         targetGift: dataIn(campaignId)?.wantedGift ?? null,
         currentPhotoUrl: bestImageUrl(imageIn(sourceCampaignId)) ?? c.photoUrl ?? null,
+        // foto sem layout (para pré-visualizar outra composição)
+        currentRawPhotoUrl: (() => {
+          const img = imageIn(sourceCampaignId) ?? c.images[0];
+          return img ? img.processedUrl || img.originalUrl || null : null;
+        })(),
         targetPhotoUrl: bestImageUrl(imageIn(campaignId)),
       };
     });
