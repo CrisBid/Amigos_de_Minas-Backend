@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
-import { Prisma } from '@prisma/client';
 import { applyCampaignData, campaignDataSelect } from '../common/child-campaign-data';
 
 type ListPagedParams = {
@@ -13,6 +12,26 @@ type ListPagedParams = {
 };
 
 type MigrationItem = { childId: string; wantedGift?: string | null; publicId?: number | null };
+
+/** Criança da planilha que ainda não existe no cadastro. */
+export type NewChildItem = {
+  key?: string; // identificador do painel, devolvido junto com o id criado
+  name: string;
+  birthDate?: string | null; // yyyy-mm-dd
+  age?: number | null;
+  motherName?: string | null;
+  wantedGift?: string | null;
+  publicId?: number | null; // ID nesta campanha
+};
+
+type AddIncludedChildrenOpts = {
+  childIds?: string[];
+  sourceCampaignId?: string;
+  items?: MigrationItem[];
+  newChildren?: NewChildItem[];
+  cityId?: string;
+  communityId?: string | null;
+};
 
 type MigrationCandidatesParams = { sourceCampaignId?: string; cityId?: string; communityId?: string };
 
@@ -221,11 +240,32 @@ export class CampaignsService {
    * da criança nesta campanha e o presente pedido; ambos ficam em ChildCampaignData.
    * O presente passa a ser o atual da criança, e o anterior é guardado na
    * campanha de origem, se ainda não estiver lá.
+   *
+   * `newChildren` são crianças da planilha que não existem no cadastro: são
+   * criadas na cidade/comunidade informada e já entram nesta campanha. O ID
+   * da planilha vira o ID delas nesta campanha e, se estiver livre, também o
+   * ID principal do cadastro (senão usamos o próximo número livre).
    */
-  async addIncludedChildren(campaignId: string, childIds: string[], sourceCampaignId?: string, items: MigrationItem[] = []) {
+  async addIncludedChildren(campaignId: string, opts: AddIncludedChildrenOpts) {
+    const { sourceCampaignId, cityId, communityId } = opts;
+    const items = opts.items ?? [];
+    const newChildren = (opts.newChildren ?? []).filter((n) => String(n?.name ?? '').trim());
+
     await this.getByIdOrThrow(campaignId);
-    const ids = Array.from(new Set([...(childIds ?? []), ...items.map((i) => i.childId)].filter(Boolean)));
-    if (!ids.length) throw new BadRequestException('Informe ao menos uma criança para migrar.');
+    const ids = Array.from(new Set([...(opts.childIds ?? []), ...items.map((i) => i.childId)].filter(Boolean)));
+    if (!ids.length && !newChildren.length) throw new BadRequestException('Informe ao menos uma criança para migrar.');
+
+    // —— local das crianças novas —— //
+    let city: { id: string; name: string } | null = null;
+    if (newChildren.length) {
+      if (!cityId) throw new BadRequestException('Informe a cidade para cadastrar as crianças novas.');
+      city = await this.prisma.city.findUnique({ where: { id: cityId }, select: { id: true, name: true } });
+      if (!city) throw new BadRequestException('Cidade não encontrada.');
+      if (communityId) {
+        const community = await this.prisma.community.findUnique({ where: { id: communityId }, select: { cityId: true } });
+        if (!community || community.cityId !== city.id) throw new BadRequestException('Comunidade não encontrada nesta cidade.');
+      }
+    }
 
     const children = await this.prisma.child.findMany({
       where: { id: { in: ids } },
@@ -240,24 +280,22 @@ export class CampaignsService {
     if (children.length !== ids.length) throw new BadRequestException('Uma ou mais crianças informadas não existem.');
     const byId = new Map(children.map((c) => [c.id, c]));
 
-    const entries = items.map((i) => {
-      const n = parseInt(String(i.publicId ?? ''), 10);
-      return { childId: i.childId, gift: String(i.wantedGift ?? '').trim(), publicId: Number.isFinite(n) ? n : null };
-    });
+    const toInt = (v: unknown) => {
+      const n = parseInt(String(v ?? ''), 10);
+      return Number.isFinite(n) ? n : null;
+    };
+    const entries = items.map((i) => ({ childId: i.childId, gift: String(i.wantedGift ?? '').trim(), publicId: toInt(i.publicId) }));
+    const fresh = newChildren.map((n) => ({ ...n, name: String(n.name).trim(), gift: String(n.wantedGift ?? '').trim(), publicId: toInt(n.publicId) }));
 
     // IDs nesta campanha: sem repetição no lote nem com crianças que ficam de fora dele
-    const withId = entries.filter((e) => e.publicId !== null);
-    const repeated = withId.filter((e, i) => withId.findIndex((o) => o.publicId === e.publicId) !== i);
+    const batchIds = [...entries, ...fresh].map((e) => e.publicId).filter((n): n is number => n !== null);
+    const repeated = batchIds.filter((n, i) => batchIds.indexOf(n) !== i);
     if (repeated.length) {
-      throw new BadRequestException(`ID repetido na lista: ${Array.from(new Set(repeated.map((e) => e.publicId))).join(', ')}.`);
+      throw new BadRequestException(`ID repetido na lista: ${Array.from(new Set(repeated)).join(', ')}.`);
     }
-    if (withId.length) {
+    if (batchIds.length) {
       const taken = await this.prisma.childCampaignData.findMany({
-        where: {
-          campaignId,
-          publicId: { in: withId.map((e) => e.publicId!) },
-          childId: { notIn: entries.map((e) => e.childId) },
-        },
+        where: { campaignId, publicId: { in: batchIds }, childId: { notIn: entries.map((e) => e.childId) } },
         select: { publicId: true, child: { select: { name: true } } },
       });
       if (taken.length) {
@@ -267,46 +305,88 @@ export class CampaignsService {
       }
     }
 
-    const ops: Prisma.PrismaPromise<unknown>[] = [
-      this.prisma.campaignChildInclude.createMany({
-        data: ids.map((childId) => ({ campaignId, childId, sourceCampaignId: sourceCampaignId ?? null })),
-        skipDuplicates: true,
-      }),
-    ];
-
-    // libera os IDs das crianças do lote antes de regravar (permite trocar IDs entre elas)
-    if (withId.length) {
-      ops.push(this.prisma.childCampaignData.updateMany({
-        where: { campaignId, childId: { in: withId.map((e) => e.childId) } },
-        data: { publicId: null },
-      }));
+    // ID principal das crianças novas: o da planilha se estiver livre no cadastro, senão o próximo número livre
+    const globalIds: number[] = [];
+    if (fresh.length) {
+      const wanted = fresh.map((f) => f.publicId).filter((n): n is number => n !== null);
+      const [used, max] = await Promise.all([
+        this.prisma.child.findMany({ where: { publicId: { in: wanted } }, select: { publicId: true } }),
+        this.prisma.child.aggregate({ _max: { publicId: true } }),
+      ]);
+      const usedSet = new Set(used.map((u) => u.publicId));
+      let next = Math.max(max._max.publicId ?? 0, ...wanted) + 1;
+      for (const f of fresh) {
+        if (f.publicId !== null && !usedSet.has(f.publicId)) {
+          usedSet.add(f.publicId);
+          globalIds.push(f.publicId);
+        } else {
+          globalIds.push(next++);
+        }
+      }
     }
 
-    for (const { childId, gift, publicId } of entries) {
-      if (!gift && publicId === null) continue;
-      const child = byId.get(childId)!;
-
-      if (gift) {
-        // guarda o presente anterior na campanha de origem antes de sobrescrever o atual
-        const inSource = (child.images?.length ?? 0) > 0 || (child.campaignIncludes?.length ?? 0) > 0;
-        if (sourceCampaignId && inSource && !child.campaignData?.length && child.wantedGift?.trim()) {
-          ops.push(this.prisma.childCampaignData.create({
-            data: { childId, campaignId: sourceCampaignId, wantedGift: child.wantedGift.trim() },
-          }));
-        }
-        ops.push(this.prisma.child.update({ where: { id: childId }, data: { wantedGift: gift } }));
+    const created = await this.prisma.$transaction(async (tx) => {
+      if (ids.length) {
+        await tx.campaignChildInclude.createMany({
+          data: ids.map((childId) => ({ campaignId, childId, sourceCampaignId: sourceCampaignId ?? null })),
+          skipDuplicates: true,
+        });
       }
 
-      const data = { ...(gift ? { wantedGift: gift } : {}), ...(publicId !== null ? { publicId } : {}) };
-      ops.push(this.prisma.childCampaignData.upsert({
-        where: { childId_campaignId: { childId, campaignId } },
-        create: { childId, campaignId, ...data },
-        update: data,
-      }));
-    }
+      // libera os IDs das crianças do lote antes de regravar (permite trocar IDs entre elas)
+      const reassigned = entries.filter((e) => e.publicId !== null).map((e) => e.childId);
+      if (reassigned.length) {
+        await tx.childCampaignData.updateMany({ where: { campaignId, childId: { in: reassigned } }, data: { publicId: null } });
+      }
 
-    await this.prisma.$transaction(ops);
-    return { added: ids.length };
+      for (const { childId, gift, publicId } of entries) {
+        if (!gift && publicId === null) continue;
+        const child = byId.get(childId)!;
+
+        if (gift) {
+          // guarda o presente anterior na campanha de origem antes de sobrescrever o atual
+          const inSource = (child.images?.length ?? 0) > 0 || (child.campaignIncludes?.length ?? 0) > 0;
+          if (sourceCampaignId && inSource && !child.campaignData?.length && child.wantedGift?.trim()) {
+            await tx.childCampaignData.create({
+              data: { childId, campaignId: sourceCampaignId, wantedGift: child.wantedGift.trim() },
+            });
+          }
+          await tx.child.update({ where: { id: childId }, data: { wantedGift: gift } });
+        }
+
+        const data = { ...(gift ? { wantedGift: gift } : {}), ...(publicId !== null ? { publicId } : {}) };
+        await tx.childCampaignData.upsert({
+          where: { childId_campaignId: { childId, campaignId } },
+          create: { childId, campaignId, ...data },
+          update: data,
+        });
+      }
+
+      // —— crianças novas —— //
+      const out: { key: string; childId: string; publicId: number }[] = [];
+      for (const [i, f] of fresh.entries()) {
+        const child = await tx.child.create({
+          data: {
+            publicId: globalIds[i],
+            name: f.name,
+            birthDate: f.birthDate ? new Date(`${f.birthDate}T00:00:00.000Z`) : null,
+            age: toInt(f.age),
+            motherName: String(f.motherName ?? '').trim() || null,
+            wantedGift: f.gift || null,
+            cityId: city!.id,
+            cityName: city!.name,
+            communityId: communityId || null,
+            campaignIncludes: { create: { campaignId } },
+            campaignData: { create: { campaignId, publicId: f.publicId, wantedGift: f.gift || null } },
+          },
+          select: { id: true, publicId: true },
+        });
+        out.push({ key: String(f.key ?? i), childId: child.id, publicId: child.publicId });
+      }
+      return out;
+    }, { timeout: 120_000 });
+
+    return { added: ids.length, created };
   }
 
   /** Remove crianças migradas anteriormente desta campanha (não afeta o cadastro original). */

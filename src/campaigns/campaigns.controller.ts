@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Delete, Query, BadRequestException, UseGuards, UploadedFile, UseInterceptors, NotFoundException  } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import { CampaignsService } from './campaigns.service';
+import { CampaignsService, NewChildItem } from './campaigns.service';
 import { StorageService } from '../common/storage/storage.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
@@ -67,14 +67,19 @@ export class CampaignsController {
       childIds?: string[];
       sourceCampaignId?: string;
       items?: { childId: string; wantedGift?: string | null; publicId?: number | null }[];
+      newChildren?: NewChildItem[];
+      cityId?: string;
+      communityId?: string | null;
     },
   ) {
-    return this.service.addIncludedChildren(
-      id,
-      Array.isArray(body?.childIds) ? body.childIds : [],
-      body?.sourceCampaignId,
-      Array.isArray(body?.items) ? body.items.filter((i) => i && typeof i.childId === 'string') : [],
-    );
+    return this.service.addIncludedChildren(id, {
+      childIds: Array.isArray(body?.childIds) ? body.childIds : [],
+      sourceCampaignId: body?.sourceCampaignId,
+      items: Array.isArray(body?.items) ? body.items.filter((i) => i && typeof i.childId === 'string') : [],
+      newChildren: Array.isArray(body?.newChildren) ? body.newChildren.filter((n) => n && typeof n.name === 'string') : [],
+      cityId: body?.cityId,
+      communityId: body?.communityId,
+    });
   }
 
   /** Candidatas da migração colada da planilha (crianças da cidade/comunidade escolhida). */
