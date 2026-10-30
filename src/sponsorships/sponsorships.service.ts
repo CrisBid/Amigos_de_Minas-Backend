@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UpdateSponsorshipDto, SponsorshipMethod } from './dto/sponsorships.dto';
 import { Prisma, SponsorshipStatus } from '@prisma/client'; // 👈 usar enum do Prisma
 import { applySponsorshipCampaignData, campaignDataSelect } from '../common/child-campaign-data';
+import { applyCampaignImage, loadCampaignLayouts } from '../common/campaign-images';
 
 type AppUser = { sub: string; roles?: string[] };
 
@@ -50,6 +51,7 @@ export class SponsorshipsService {
     // se você tiver esses campos “legado”, pode manter
     cityName: true,
     schoolLegacy: true,
+    cityId: true, // escolhe o layout da cidade na campanha do apadrinhamento
 
     // relações para nomes (a UI usa .name)
     city: { select: { id: true, name: true } },
@@ -68,11 +70,13 @@ export class SponsorshipsService {
         originalUrl: true,
         processedUrl: true,
         framedUrl: true,
+        layoutKey: true,
         layoutUrl: true,
         Config: true,       // JSON do layout
         width: true,
         height: true,
         status: true,
+        createdAt: true,
         updatedAt: true,
       },
       orderBy: { updatedAt: 'desc' },
@@ -233,7 +237,13 @@ export class SponsorshipsService {
       select: this.sponsorshipSelectForMe,
       orderBy: [{ createdAt: 'desc' }],
     });
-    return rows.map(applySponsorshipCampaignData);
+    // imagem de cada criança montada com o layout da cidade dela na campanha do apadrinhamento
+    const layouts = await loadCampaignLayouts(this.prisma, rows.map((r) => r.campaign.id));
+    return rows.map((r) => {
+      applySponsorshipCampaignData(r);
+      applyCampaignImage(r.child as any, r.campaign.id, layouts.get(r.campaign.id));
+      return r;
+    });
   }
 
   async listAll(campaignId?: string) {

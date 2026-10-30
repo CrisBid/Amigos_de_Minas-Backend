@@ -4,6 +4,7 @@ import { StorageService } from '../common/storage/storage.service';
 import * as sharp from 'sharp';
 import { Prisma, SponsorshipStatus } from '@prisma/client';
 import { applyCampaignData, campaignDataSelect } from '../common/child-campaign-data';
+import { applyCampaignImage, loadCampaignLayouts } from '../common/campaign-images';
 
 type PageOpts = { skip: number; take: number };
 type ListOpts = {
@@ -275,7 +276,12 @@ export class ChildrenService {
     });
 
     if (campaignId) {
-      for (const c of children) applyCampaignData(c, campaignId);
+      // ID/presente desta campanha e a imagem montada com o layout da cidade nesta campanha
+      const layouts = (await loadCampaignLayouts(this.prisma, [campaignId])).get(campaignId);
+      for (const c of children) {
+        applyCampaignData(c, campaignId);
+        applyCampaignImage(c as any, campaignId, layouts);
+      }
     }
 
     // —— Enriquecimento por scan de FS apenas para itens desta página —— //
