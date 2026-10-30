@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/storage/storage.service';
 import * as sharp from 'sharp';
 import { Prisma, SponsorshipStatus } from '@prisma/client';
+import { applyCampaignData, campaignDataSelect } from '../common/child-campaign-data';
 
 type PageOpts = { skip: number; take: number };
 type ListOpts = {
@@ -268,17 +269,13 @@ export class ChildrenService {
             orderBy: { createdAt: 'desc' },
             take: 1,
           } as Prisma.Child$sponsorshipsArgs),
-        // presente específico desta campanha (histórico), quando houver
-        ...(campaignId ? { campaignGifts: { where: { campaignId }, select: { wantedGift: true } } } : {}),
+        // ID e presente específicos desta campanha, quando houver
+        ...(campaignId ? { campaignData: { where: { campaignId }, ...campaignDataSelect } } : {}),
       },
     });
 
     if (campaignId) {
-      for (const c of children as any[]) {
-        const gift = c.campaignGifts?.[0]?.wantedGift;
-        if (gift) c.wantedGift = gift;
-        delete c.campaignGifts;
-      }
+      for (const c of children) applyCampaignData(c, campaignId);
     }
 
     // —— Enriquecimento por scan de FS apenas para itens desta página —— //
@@ -345,6 +342,7 @@ export class ChildrenService {
       where: { id: childId },
       select: {
         id: true,
+        publicId: true,
         wantedGift: true,
         photoUrl: true,
         images: {
@@ -353,7 +351,7 @@ export class ChildrenService {
           orderBy: { createdAt: 'desc' },
         },
         campaignIncludes: { select: { campaignId: true, sourceCampaignId: true, createdAt: true } },
-        campaignGifts: { select: { campaignId: true, wantedGift: true, updatedAt: true } },
+        campaignData: campaignDataSelect,
         sponsorships: {
           select: {
             id: true, campaignId: true, status: true, method: true, createdAt: true,
@@ -369,7 +367,7 @@ export class ChildrenService {
       ...child.images.map((i) => i.campaignId!),
       ...child.campaignIncludes.map((i) => i.campaignId),
       ...child.campaignIncludes.map((i) => i.sourceCampaignId).filter((id): id is string => !!id),
-      ...child.campaignGifts.map((g) => g.campaignId),
+      ...child.campaignData.map((d) => d.campaignId),
       ...child.sponsorships.map((s) => s.campaignId),
     ]);
 
@@ -380,17 +378,18 @@ export class ChildrenService {
     });
     const nameById = new Map(campaigns.map((c) => [c.id, c.name]));
 
-    // sem nenhum registro por campanha (dados anteriores ao histórico), o presente atual é o único conhecido
-    const hasGiftHistory = child.campaignGifts.length > 0;
+    // sem nenhum presente por campanha (dados anteriores ao histórico), o presente atual é o único conhecido
+    const hasGiftHistory = child.campaignData.some((d) => d.wantedGift);
 
     return campaigns.map((campaign) => {
       const image = child.images.find((i) => i.campaignId === campaign.id);
       const include = child.campaignIncludes.find((i) => i.campaignId === campaign.id);
-      const gift = child.campaignGifts.find((g) => g.campaignId === campaign.id);
+      const data = child.campaignData.find((d) => d.campaignId === campaign.id);
       return {
         campaign,
-        wantedGift: gift?.wantedGift ?? (hasGiftHistory ? null : child.wantedGift ?? null),
-        giftFromHistory: !!gift,
+        publicId: data?.publicId ?? child.publicId,
+        wantedGift: data?.wantedGift ?? (hasGiftHistory ? null : child.wantedGift ?? null),
+        giftFromHistory: !!data?.wantedGift,
         photoUrl: image ? image.framedUrl || image.processedUrl || image.originalUrl : null,
         hasPhoto: !!image,
         migratedFrom: include

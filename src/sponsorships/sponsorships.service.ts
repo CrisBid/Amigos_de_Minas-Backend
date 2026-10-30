@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, ForbiddenException 
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateSponsorshipDto, SponsorshipMethod } from './dto/sponsorships.dto';
 import { Prisma, SponsorshipStatus } from '@prisma/client'; // 👈 usar enum do Prisma
+import { applySponsorshipCampaignData, campaignDataSelect } from '../common/child-campaign-data';
 
 type AppUser = { sub: string; roles?: string[] };
 
@@ -54,6 +55,9 @@ export class SponsorshipsService {
     city: { select: { id: true, name: true } },
     community: { select: { id: true, name: true } },
     school: { select: { id: true, name: true } },
+
+    // ID e presente da criança em cada campanha (aplicados via applySponsorshipCampaignData)
+    campaignData: campaignDataSelect,
 
     // imagens processadas (shape usado por pickComposeInputsFromImages)
     images: {
@@ -223,16 +227,17 @@ export class SponsorshipsService {
   }
 
   // ====== AQUI: rota /sponsorships/me com child completo ======
-  mine(sponsorUserId: string, campaignId?: string) {
-    return this.prisma.sponsorship.findMany({
+  async mine(sponsorUserId: string, campaignId?: string) {
+    const rows = await this.prisma.sponsorship.findMany({
       where: { sponsorId: sponsorUserId, ...(campaignId ? { campaignId } : {}) },
       select: this.sponsorshipSelectForMe,
       orderBy: [{ createdAt: 'desc' }],
     });
+    return rows.map(applySponsorshipCampaignData);
   }
 
-  listAll(campaignId?: string) {
-    return this.prisma.sponsorship.findMany({
+  async listAll(campaignId?: string) {
+    const rows = await this.prisma.sponsorship.findMany({
       where: campaignId ? { campaignId } : undefined,
       include: {
         sponsor: {
@@ -259,11 +264,13 @@ export class SponsorshipsService {
             // 👇 adiciona aqui os relacionamentos reais:
             city: { select: { id: true, name: true } },
             community: { select: { id: true, name: true } },
+            campaignData: campaignDataSelect,
           },
         },
       },
       orderBy: [{ createdAt: 'desc' }],
     });
+    return rows.map(applySponsorshipCampaignData);
   }
 
   async activate(id: string) {

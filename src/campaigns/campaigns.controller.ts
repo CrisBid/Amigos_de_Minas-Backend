@@ -63,7 +63,11 @@ export class CampaignsController {
   @Post(':id/included-children')
   addIncludedChildren(
     @Param('id') id: string,
-    @Body() body: { childIds?: string[]; sourceCampaignId?: string; items?: { childId: string; wantedGift?: string | null }[] },
+    @Body() body: {
+      childIds?: string[];
+      sourceCampaignId?: string;
+      items?: { childId: string; wantedGift?: string | null; publicId?: number | null }[];
+    },
   ) {
     return this.service.addIncludedChildren(
       id,
@@ -73,12 +77,17 @@ export class CampaignsController {
     );
   }
 
-  /** Pré-visualização da migração colada da planilha (resolve IDs públicos). */
+  /** Candidatas da migração colada da planilha (crianças da cidade/comunidade escolhida). */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'STAFF')
-  @Post(':id/migration-preview')
-  previewMigration(@Param('id') id: string, @Body() body: { publicIds?: number[]; sourceCampaignId?: string }) {
-    return this.service.previewMigration(id, Array.isArray(body?.publicIds) ? body.publicIds : [], body?.sourceCampaignId);
+  @Get(':id/migration-candidates')
+  migrationCandidates(
+    @Param('id') id: string,
+    @Query('sourceCampaignId') sourceCampaignId?: string,
+    @Query('cityId') cityId?: string,
+    @Query('communityId') communityId?: string,
+  ) {
+    return this.service.migrationCandidates(id, { sourceCampaignId, cityId, communityId });
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

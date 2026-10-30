@@ -475,10 +475,10 @@ export class ChildrenController {
         created.push(pid);
       }
 
-      // histórico: presente pedido nesta campanha
+      // histórico: presente pedido nesta campanha (o ID aqui é o próprio publicId da criança)
       const gift = String(c.wantedGift ?? '').trim();
       if (context.campaignId && gift) {
-        await this.prisma.childCampaignGift.upsert({
+        await this.prisma.childCampaignData.upsert({
           where: { childId_campaignId: { childId: saved.id, campaignId: context.campaignId } },
           create: { childId: saved.id, campaignId: context.campaignId, wantedGift: gift },
           update: { wantedGift: gift },

@@ -5,6 +5,7 @@ import { ExportLevel, ExportSponsorshipsQueryDto } from './dto/export-sponsorshi
 import { buildExcelBuffer, ChildRow } from './utils/excel.util';
 // Opcional: se quiser tipar os filtros com os enums:
 import { SponsorshipStatus, SponsorshipMethod } from '@prisma/client';
+import { applySponsorshipCampaignData, campaignDataSelect } from '../../common/child-campaign-data';
 
 function calcAge(birth: Date | null): number | null {
   if (!birth) return null;
@@ -83,6 +84,7 @@ export class ExportSponsorshipsService {
       orderBy: [{ createdAt: 'asc' }],
       select: {
         id: true,
+        campaignId: true,
         status: true,
         method: true,
         startDate: true,
@@ -117,6 +119,7 @@ export class ExportSponsorshipsService {
             city: { select: { id: true, publicId: true, name: true } },
             community: { select: { id: true, publicId: true, name: true } },
             school: { select: { id: true, publicId: true, name: true } }, // opcional
+            campaignData: campaignDataSelect, // ID e presente por campanha
           },
         },
 
@@ -127,7 +130,7 @@ export class ExportSponsorshipsService {
     });
 
     // Mapeia linhas
-    const rows: ChildRow[] = sponsorships.map(sp => {
+    const rows: ChildRow[] = sponsorships.map(applySponsorshipCampaignData).map(sp => {
       const child = sp.child;
       const birthDate: Date | null = child?.birthDate ?? null;
       const age = child?.age ?? calcAge(birthDate);
