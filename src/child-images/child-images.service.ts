@@ -99,9 +99,34 @@ export class ChildImagesService {
     return this.prisma.childImage.findUnique({ where: { id: imageId } });
   }
 
-  async updateCompose(imageId: string, compose: ComposeOpts) {
-    const img = await this.get(imageId);
+  /**
+   * Salva a composição da imagem. Aceita o formato antigo (opções planas) ou
+   * `{ config, frameId }`: `config` é a composição completa (ChildImage.Config) e
+   * `frameId` troca o layout da imagem pelo layout atual da campanha/cidade.
+   */
+  async updateCompose(imageId: string, body: any) {
+    const compose: ComposeOpts = body?.config ?? body ?? {};
+    let img = await this.get(imageId);
     if (!img) return null;
+
+    if (body?.frameId) {
+      const frame = await this.prisma.campaignFrame.findUnique({ where: { id: String(body.frameId) } });
+      if (frame && frame.campaignId === img.campaignId && frame.key !== img.layoutKey) {
+        img = await this.prisma.childImage.update({
+          where: { id: imageId },
+          data: { layoutKey: frame.key, layoutUrl: frame.url },
+        });
+      }
+    }
+
+    // composição completa (canvas/photoRect) ou opções planas antigas
+    const c: any = compose;
+    const width = c.canvas?.width ?? c.width;
+    const height = c.canvas?.height ?? c.height;
+    const fit = c.photoRect?.fit ?? c.fit ?? 'cover';
+    const gravity = c.photoRect?.gravity ?? c.gravity ?? 'center';
+    const cornerRadius = c.photoRect?.cornerRadius ?? c.cornerRadius ?? 0;
+
     // Regerar framed se tiver layout e processed
     if (img.layoutKey && img.processedKey) {
       const base = await this.storage.readBufferByKey(img.processedKey);
@@ -109,16 +134,15 @@ export class ChildImagesService {
       const composed = await this.storage.compositeFramed({
         photo: base,
         frame,
-        width: compose.width,
-        height: compose.height,
-        fit: compose.fit ?? 'cover',
-        gravity: compose.gravity ?? 'center',
-        cornerRadius: compose.cornerRadius ?? 0,
+        width,
+        height,
+        fit,
+        gravity,
+        cornerRadius,
       });
-      // salva uma nova versão framed
-      const pathParts = img.framedKey?.split('/') ?? [];
-      const idxFile = pathParts.length - 1;
-      if (idxFile >= 0) pathParts[idxFile] = `framed-${Date.now()}.webp`;
+      // salva uma nova versão framed (na pasta da framed atual, ou da processed se ainda não houver)
+      const pathParts = (img.framedKey ?? img.processedKey).split('/');
+      pathParts[pathParts.length - 1] = `framed-${Date.now()}.webp`;
       const newKey = pathParts.join('/');
       await this.storage.saveBuffer(newKey, composed);
 

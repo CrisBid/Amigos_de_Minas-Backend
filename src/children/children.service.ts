@@ -4,7 +4,7 @@ import { StorageService } from '../common/storage/storage.service';
 import * as sharp from 'sharp';
 import { Prisma, SponsorshipStatus } from '@prisma/client';
 import { applyCampaignData, campaignDataSelect } from '../common/child-campaign-data';
-import { applyCampaignImage, loadCampaignLayouts } from '../common/campaign-images';
+import { applyCampaignImage, loadCampaignLayouts, resolveFrame } from '../common/campaign-images';
 
 type PageOpts = { skip: number; take: number };
 type ListOpts = {
@@ -341,7 +341,9 @@ export class ChildrenService {
 
   /**
    * Histórico da criança: todas as campanhas de que participou (foto publicada,
-   * migração ou apadrinhamento), com o presente, a foto e os apadrinhamentos de cada uma.
+   * migração ou apadrinhamento), com ID, presente, foto, layout e apadrinhamentos de cada uma.
+   * `image` é a foto enviada para a própria campanha; `display` é o que o site mostra
+   * (foto da campanha ou, se não houver, a mais recente, montada com o layout atual).
    */
   async campaignHistory(childId: string) {
     const child = await this.prisma.child.findUnique({
@@ -349,11 +351,16 @@ export class ChildrenService {
       select: {
         id: true,
         publicId: true,
+        cityId: true,
         wantedGift: true,
         photoUrl: true,
         images: {
           where: { campaignId: { not: null } },
-          select: { campaignId: true, framedUrl: true, processedUrl: true, originalUrl: true, createdAt: true },
+          select: {
+            id: true, campaignId: true, createdAt: true,
+            framedUrl: true, processedUrl: true, originalUrl: true,
+            layoutKey: true, layoutUrl: true, Config: true,
+          },
           orderBy: { createdAt: 'desc' },
         },
         campaignIncludes: { select: { campaignId: true, sourceCampaignId: true, createdAt: true } },
@@ -383,6 +390,7 @@ export class ChildrenService {
       orderBy: [{ year: 'desc' }, { startDate: 'desc' }],
     });
     const nameById = new Map(campaigns.map((c) => [c.id, c.name]));
+    const layouts = await loadCampaignLayouts(this.prisma, campaigns.map((c) => c.id));
 
     // sem nenhum presente por campanha (dados anteriores ao histórico), o presente atual é o único conhecido
     const hasGiftHistory = child.campaignData.some((d) => d.wantedGift);
@@ -391,19 +399,81 @@ export class ChildrenService {
       const image = child.images.find((i) => i.campaignId === campaign.id);
       const include = child.campaignIncludes.find((i) => i.campaignId === campaign.id);
       const data = child.campaignData.find((d) => d.campaignId === campaign.id);
+      const campaignLayouts = layouts.get(campaign.id);
+      const resolved = resolveFrame(campaignLayouts, child.cityId);
+      const display = applyCampaignImage({ images: [...child.images], cityId: child.cityId }, campaign.id, campaignLayouts).images?.[0] ?? null;
+      const displaySource = display && !image ? child.images.find((i) => i.id === display.id) : null;
       return {
         campaign,
         publicId: data?.publicId ?? child.publicId,
+        campaignPublicId: data?.publicId ?? null,
         wantedGift: data?.wantedGift ?? (hasGiftHistory ? null : child.wantedGift ?? null),
         giftFromHistory: !!data?.wantedGift,
         photoUrl: image ? image.framedUrl || image.processedUrl || image.originalUrl : null,
         hasPhoto: !!image,
+        image: image ?? null,
+        layout: resolved
+          ? { id: resolved.frame.id, name: resolved.frame.name, url: resolved.frame.url, config: resolved.frame.config, source: resolved.source }
+          : null,
+        display,
+        // foto mostrada vem de outra campanha (criança migrada sem foto nova)
+        displayFromCampaign: displaySource?.campaignId
+          ? { id: displaySource.campaignId, name: nameById.get(displaySource.campaignId) ?? null }
+          : null,
         migratedFrom: include
           ? { id: include.sourceCampaignId, name: include.sourceCampaignId ? nameById.get(include.sourceCampaignId) ?? null : null, at: include.createdAt }
           : null,
         sponsorships: child.sponsorships.filter((s) => s.campaignId === campaign.id),
       };
     });
+  }
+
+  /**
+   * ID e presente da criança em uma campanha. ID vazio volta a usar o ID principal;
+   * o presente vira também o atual da criança quando a campanha é a mais recente dela.
+   */
+  async updateCampaignData(childId: string, campaignId: string, body: { publicId?: unknown; wantedGift?: unknown }) {
+    const child = await this.prisma.child.findUnique({ where: { id: childId }, select: { id: true } });
+    if (!child) throw new NotFoundException('Criança não encontrada');
+    const campaign = await this.prisma.campaign.findUnique({ where: { id: campaignId }, select: { id: true } });
+    if (!campaign) throw new NotFoundException('Campanha não encontrada');
+
+    const rawId = String(body?.publicId ?? '').trim();
+    const publicId = rawId ? parseInt(rawId, 10) : null;
+    if (rawId && !Number.isFinite(publicId)) throw new BadRequestException('ID inválido.');
+    const wantedGift = String(body?.wantedGift ?? '').trim() || null;
+
+    if (publicId !== null) {
+      const taken = await this.prisma.childCampaignData.findFirst({
+        where: { campaignId, publicId, childId: { not: childId } },
+        select: { child: { select: { name: true } } },
+      });
+      if (taken) throw new BadRequestException(`ID ${publicId} já usado nesta campanha por ${taken.child.name}.`);
+    }
+
+    const saved = await this.prisma.childCampaignData.upsert({
+      where: { childId_campaignId: { childId, campaignId } },
+      create: { childId, campaignId, publicId, wantedGift },
+      update: { publicId, wantedGift },
+      select: { publicId: true, wantedGift: true },
+    });
+
+    // campanha mais recente da criança → o presente também é o atual
+    if (wantedGift) {
+      const latest = await this.prisma.campaign.findFirst({
+        where: {
+          OR: [
+            { images: { some: { childId } } },
+            { includedChildren: { some: { childId } } },
+            { childData: { some: { childId } } },
+          ],
+        },
+        orderBy: [{ year: 'desc' }, { startDate: 'desc' }],
+        select: { id: true },
+      });
+      if (latest?.id === campaignId) await this.prisma.child.update({ where: { id: childId }, data: { wantedGift } });
+    }
+    return saved;
   }
 
   private buildWhereForCategories(opts: CategoryOpts): Prisma.ChildWhereInput {

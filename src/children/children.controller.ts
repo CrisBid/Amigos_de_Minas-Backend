@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -139,6 +140,18 @@ export class ChildrenController {
   @Get(':id/campaigns')
   campaignHistory(@Param('id') id: string) {
     return this.service.campaignHistory(id);
+  }
+
+  /** ID e presente da criança em uma campanha */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @Put(':id/campaigns/:campaignId')
+  updateCampaignData(
+    @Param('id') id: string,
+    @Param('campaignId') campaignId: string,
+    @Body() body: { publicId?: number | string | null; wantedGift?: string | null },
+  ) {
+    return this.service.updateCampaignData(id, campaignId, body);
   }
 
   /** Estatísticas globais, ou restritas ao roster de UMA campanha se `campaignId` vier */

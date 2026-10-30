@@ -1,6 +1,6 @@
 import { PrismaService } from '../prisma/prisma.service';
 
-type Frame = { id: string; key: string; url: string; config: unknown };
+type Frame = { id: string; key: string; url: string; name: string | null; config: unknown };
 
 export type CampaignLayouts = { active: Frame | null; byCity: Map<string, Frame> };
 
@@ -15,7 +15,15 @@ type ImageLike = {
   [k: string]: unknown;
 };
 
-const frameSelect = { id: true, key: true, url: true, config: true } as const;
+const frameSelect = { id: true, key: true, url: true, name: true, config: true } as const;
+
+/** Layout usado para a criança na campanha: o da cidade dela, senão o padrão. */
+export function resolveFrame(layouts: CampaignLayouts | undefined, cityId?: string | null) {
+  const byCity = cityId ? layouts?.byCity.get(cityId) : undefined;
+  if (byCity) return { frame: byCity, source: 'city' as const };
+  if (layouts?.active) return { frame: layouts.active, source: 'default' as const };
+  return null;
+}
 
 /** Layout padrão e layouts por cidade de cada campanha. */
 export async function loadCampaignLayouts(prisma: PrismaService, campaignIds: string[]) {
@@ -50,7 +58,7 @@ export function applyCampaignImage<T extends { images?: ImageLike[]; cityId?: st
 
   const own = images.filter((i) => i.campaignId === campaignId).sort((a, b) => time(b) - time(a))[0];
   const base = own ?? [...images].sort((a, b) => time(b) - time(a))[0];
-  const frame = (child.cityId ? layouts?.byCity.get(child.cityId) : undefined) ?? layouts?.active ?? null;
+  const frame = resolveFrame(layouts, child.cityId)?.frame ?? null;
 
   // a arte pronta e o enquadramento salvos só servem se foram feitos com este mesmo layout
   const sameLayout = !!own && (!frame || own.layoutKey === frame.key);
