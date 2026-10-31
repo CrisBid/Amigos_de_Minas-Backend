@@ -512,7 +512,7 @@ export class ChildrenController {
     const updated: number[] = [];
     const ids: Record<string, string> = {};
     // ID da planilha que já era de outra criança no cadastro: criamos cadastro novo
-    const renumbered: { publicId: number; newMainId: number; existingName: string }[] = [];
+    const renumbered: { publicId: number; newMainId: number; existingName: string; sameIdInCampaign: boolean }[] = [];
 
     for (const { c, pid } of rows) {
       const data: any = {
@@ -542,10 +542,30 @@ export class ChildrenController {
       }
       // 2) o ID principal — com campanha, só se for a mesma criança (mesmo nome)
       let mainIdTakenBy: string | null = null;
+      // a outra criança também está nesta campanha sem ID próprio, então aparece com este mesmo número
+      let sameIdInCampaign = false;
       if (!targetId) {
-        const byMain = await this.prisma.child.findUnique({ where: { publicId: pid }, select: { id: true, name: true } });
+        const byMain = await this.prisma.child.findUnique({
+          where: { publicId: pid },
+          select: {
+            id: true,
+            name: true,
+            ...(campaignId
+              ? {
+                  images: { where: { campaignId }, select: { id: true }, take: 1 },
+                  campaignIncludes: { where: { campaignId }, select: { id: true } },
+                  campaignData: { where: { campaignId }, select: { publicId: true } },
+                }
+              : {}),
+          },
+        });
         if (byMain && (!campaignId || sameName(byMain.name, data.name))) targetId = byMain.id;
-        else if (byMain) mainIdTakenBy = byMain.name;
+        else if (byMain) {
+          mainIdTakenBy = byMain.name;
+          const b: any = byMain;
+          const inCampaign = (b.images?.length ?? 0) > 0 || (b.campaignIncludes?.length ?? 0) > 0;
+          sameIdInCampaign = inCampaign && b.campaignData?.[0]?.publicId == null;
+        }
       }
 
       let saved: { id: string };
@@ -557,7 +577,7 @@ export class ChildrenController {
         const mainId = mainIdTakenBy ? await takeFreeId() : pid;
         saved = await this.prisma.child.create({ data: { ...data, publicId: mainId }, select: { id: true } });
         created.push(pid);
-        if (mainIdTakenBy) renumbered.push({ publicId: pid, newMainId: mainId, existingName: mainIdTakenBy });
+        if (mainIdTakenBy) renumbered.push({ publicId: pid, newMainId: mainId, existingName: mainIdTakenBy, sameIdInCampaign });
       }
       ids[String(pid)] = saved.id;
 
