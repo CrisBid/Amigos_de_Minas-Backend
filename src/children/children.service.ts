@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/storage/storage.service';
 import * as sharp from 'sharp';
+import sharpLib from 'sharp';
 import { Prisma, SponsorshipStatus } from '@prisma/client';
 import { applyCampaignData, campaignDataSelect } from '../common/child-campaign-data';
 import { applyCampaignImage, loadCampaignLayouts, resolveFrame } from '../common/campaign-images';
@@ -189,6 +190,14 @@ export class ChildrenService {
         { wantedGift: { contains: query, mode: 'insensitive' } },
         { category: { contains: query, mode: 'insensitive' } },
       ];
+      // número: também pelo ID principal e pelo ID na campanha
+      if (/^\d{1,9}$/.test(query)) {
+        const n = parseInt(query, 10);
+        where.OR.push(
+          { publicId: n },
+          { campaignData: { some: { publicId: n, ...(campaignId ? { campaignId } : {}) } } },
+        );
+      }
     }
 
     // —— filtro por faixa etária via birthDate —— //
@@ -426,6 +435,34 @@ export class ChildrenService {
         sponsorships: child.sponsorships.filter((s) => s.campaignId === campaign.id),
       };
     });
+  }
+
+  /**
+   * Miniatura quadrada da FOTO da criança (sem moldura), para listagens. Usa a foto
+   * da campanha (se informada) ou a mais recente; gera uma vez e reaproveita do disco.
+   */
+  async thumbnail(childId: string, width: number, campaignId?: string) {
+    const select = { id: true, processedKey: true, originalKey: true } as const;
+    const img =
+      (campaignId
+        ? await this.prisma.childImage.findFirst({ where: { childId, campaignId }, orderBy: { createdAt: 'desc' }, select })
+        : null) ??
+      (await this.prisma.childImage.findFirst({ where: { childId }, orderBy: { createdAt: 'desc' }, select }));
+    if (!img) throw new NotFoundException('Criança sem foto');
+
+    const srcKey = img.processedKey || img.originalKey;
+    const dir = srcKey.split('/').slice(0, -1).join('/');
+    const thumbKey = `${dir}/thumb-${img.id}-${width}.webp`;
+    if (await this.storage.exists(thumbKey)) return this.storage.readBufferByKey(thumbKey);
+
+    const src = await this.storage.readBufferByKey(srcKey);
+    const buf = await sharpLib(src)
+      .rotate()
+      .resize(width, width, { fit: 'cover', position: 'attention' })
+      .webp({ quality: 72 })
+      .toBuffer();
+    await this.storage.saveBuffer(thumbKey, buf);
+    return buf;
   }
 
   /**

@@ -134,6 +134,30 @@ export class ChildrenController {
     return this.service.get(id);
   }
 
+  /** Miniatura da foto (sem moldura) para listagens: ?w=96&campaignId=...&v=<id da imagem p/ cache> */
+  @Get(':id/thumb')
+  async thumb(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @Query('w') w?: string,
+    @Query('campaignId') campaignId?: string,
+  ) {
+    // poucos tamanhos possíveis, para não encher o disco de variações
+    const SIZES = [64, 96, 128, 192, 256, 384];
+    const want = parseInt(String(w ?? '96'), 10) || 96;
+    const width = SIZES.find((s) => s >= want) ?? SIZES[SIZES.length - 1];
+    try {
+      const buf = await this.service.thumbnail(id, width, campaignId || undefined);
+      res.setHeader('Content-Type', 'image/webp');
+      // a URL muda quando a foto muda (?v=), então pode ficar em cache por bastante tempo
+      res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+      return res.send(buf);
+    } catch (e) {
+      if (e instanceof NotFoundException) return res.status(404).send();
+      throw e;
+    }
+  }
+
   /** Histórico: campanhas de que a criança participou, com presente, foto e apadrinhamentos */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'STAFF')
@@ -306,6 +330,7 @@ export class ChildrenController {
   // ----- FOTO POR CAMPANHA (ADMIN/STAFF) -----
 
   /** Envia/atualiza a foto de uma criança para UMA campanha específica */
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'STAFF')
   @Post(':id/photo')
   @UseInterceptors(
@@ -423,6 +448,15 @@ export class ChildrenController {
     return this.service.deletePhotoForCampaign(childId, campaignId);
   }
 
+  /**
+   * Cadastro guiado: cria/atualiza as crianças da planilha na cidade/comunidade do contexto.
+   * Com campanha, o ID da planilha é o ID da criança NESTA campanha (a numeração muda entre
+   * campanhas), então a criança é procurada primeiro por esse ID na campanha e só depois pelo
+   * ID principal — e, nesse caso, só se o nome também bater; senão é outra criança e ganha
+   * cadastro novo. Todas entram na campanha (mesmo sem foto). Devolve `ids` (ID da planilha →
+   * id interno) para o painel enviar as fotos para a criança certa.
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN','STAFF')
   @Post('bulk/commit')
   async bulkCommit(@Body() dto: BulkCommitDto) {
@@ -442,24 +476,38 @@ export class ChildrenController {
       const exists = await this.prisma.school.findUnique({ where: { id: context.schoolId } });
       if (!exists) throw new BadRequestException('Escola não encontrada');
     }
-    // (opcional) validar campanha, se vier
-    if (context.campaignId) {
-      const exists = await this.prisma.campaign.findUnique({ where: { id: context.campaignId } });
+    const campaignId = context.campaignId || null;
+    if (campaignId) {
+      const exists = await this.prisma.campaign.findUnique({ where: { id: campaignId } });
       if (!exists) throw new BadRequestException('Campanha não encontrada');
     }
 
+    // valida os IDs antes de gravar qualquer coisa
+    const rows = children.map((c) => {
+      const pid = parseInt(String(c.publicId).trim(), 10);
+      if (!Number.isFinite(pid)) throw new BadRequestException(`publicId inválido: ${c.publicId}`);
+      return { c, pid };
+    });
+
+    const sameName = (a?: string | null, b?: string | null) =>
+      normalizeName(a) !== '' && normalizeName(a) === normalizeName(b);
+    let nextFreeId: number | null = null;
+    const takeFreeId = async () => {
+      if (nextFreeId === null) {
+        const max = await this.prisma.child.aggregate({ _max: { publicId: true } });
+        nextFreeId = (max._max.publicId ?? 0) + 1;
+      }
+      return nextFreeId++;
+    };
+
     const created: number[] = [];
     const updated: number[] = [];
+    const ids: Record<string, string> = {};
+    // ID da planilha que já era de outra criança no cadastro: criamos cadastro novo
+    const renumbered: { publicId: number; newMainId: number; existingName: string }[] = [];
 
-    for (const c of children) {
-      // publicId vem como string/number — normalize para int
-      const pid = parseInt(String(c.publicId).trim(), 10);
-      if (!Number.isFinite(pid)) {
-        throw new BadRequestException(`publicId inválido: ${c.publicId}`);
-      }
-
-      const data:any = {
-        publicId: pid,
+    for (const { c, pid } of rows) {
+      const data: any = {
         name: c.name.trim(),
         // birthDate ISO (YYYY-MM-DD) -> Date
         birthDate: c.birthDate ? new Date(`${c.birthDate}T00:00:00.000Z`) : null,
@@ -468,64 +516,68 @@ export class ChildrenController {
         category: c.category ?? null,
         wantedGift: c.wantedGift ?? null,
         description: c.description ?? null,
-        schoolLegacy: c.school ?? null, 
+        schoolLegacy: c.school ?? null,
         cityId: city.id,
         cityName: city.name, // importantíssimo p/ seu schema
       };
-
       if (context.communityId) data.communityId = context.communityId;
       if (context.schoolId)    data.schoolId = context.schoolId;
 
-      const exists = await this.prisma.child.findUnique({ where: { publicId: pid } });
+      // 1) quem já tem este ID nesta campanha
+      let targetId: string | null = null;
+      if (campaignId) {
+        const inCampaign = await this.prisma.childCampaignData.findUnique({
+          where: { campaignId_publicId: { campaignId, publicId: pid } },
+          select: { childId: true },
+        });
+        targetId = inCampaign?.childId ?? null;
+      }
+      // 2) o ID principal — com campanha, só se for a mesma criança (mesmo nome)
+      let mainIdTakenBy: string | null = null;
+      if (!targetId) {
+        const byMain = await this.prisma.child.findUnique({ where: { publicId: pid }, select: { id: true, name: true } });
+        if (byMain && (!campaignId || sameName(byMain.name, data.name))) targetId = byMain.id;
+        else if (byMain) mainIdTakenBy = byMain.name;
+      }
 
       let saved: { id: string };
-      if (exists) {
-        saved = await this.prisma.child.update({
-          where: { publicId: pid },
-          data,
-        });
+      if (targetId) {
+        // não mexe no ID principal de quem já existe (pode ser outro número)
+        saved = await this.prisma.child.update({ where: { id: targetId }, data, select: { id: true } });
         updated.push(pid);
       } else {
-        saved = await this.prisma.child.create({ data });
+        const mainId = mainIdTakenBy ? await takeFreeId() : pid;
+        saved = await this.prisma.child.create({ data: { ...data, publicId: mainId }, select: { id: true } });
         created.push(pid);
+        if (mainIdTakenBy) renumbered.push({ publicId: pid, newMainId: mainId, existingName: mainIdTakenBy });
       }
+      ids[String(pid)] = saved.id;
 
-      // histórico: presente pedido nesta campanha (o ID aqui é o próprio publicId da criança)
-      const gift = String(c.wantedGift ?? '').trim();
-      if (context.campaignId && gift) {
+      if (campaignId) {
+        // faz parte da campanha (mesmo sem foto) com o ID e o presente desta campanha
+        const gift = String(c.wantedGift ?? '').trim() || null;
+        await this.prisma.campaignChildInclude.createMany({
+          data: [{ campaignId, childId: saved.id }],
+          skipDuplicates: true,
+        });
         await this.prisma.childCampaignData.upsert({
-          where: { childId_campaignId: { childId: saved.id, campaignId: context.campaignId } },
-          create: { childId: saved.id, campaignId: context.campaignId, wantedGift: gift },
-          update: { wantedGift: gift },
+          where: { childId_campaignId: { childId: saved.id, campaignId } },
+          create: { childId: saved.id, campaignId, publicId: pid, wantedGift: gift },
+          update: { publicId: pid, ...(gift ? { wantedGift: gift } : {}) },
         });
       }
-      // (opcional) se sua modelagem usa tabelas-ponte N:N, em vez de FKs diretas:
-      /*
-      if (context.communityId) {
-        await this.prisma.childCommunity.upsert({
-          where: { childId_communityId: { childId: exists?.id ?? (await this.prisma.child.findUnique({ where: { publicId: pid } }))!.id, communityId: context.communityId } },
-          create: { childId: (await this.prisma.child.findUnique({ where: { publicId: pid } }))!.id, communityId: context.communityId },
-          update: {},
-        });
-      }
-      if (context.schoolId) {
-        await this.prisma.childSchool.upsert({
-          where: { childId_schoolId: { childId: ..., schoolId: context.schoolId } },
-          create: { childId: ..., schoolId: context.schoolId },
-          update: {},
-        });
-      }
-
-      //(opcional) garanta o vínculo com a campanha (N:N) se existir a relação child<->campaign
-      if (context.campaignId) {
-        await this.prisma.child.update({
-          where: { publicId: pid },
-          data: { campaigns: { connect: { id: context.campaignId } } },
-        });
-      }
-      */
     }
 
-    return { created, updated };
+    return { created, updated, ids, renumbered };
   }
+}
+
+/** Compara nomes ignorando acentos, caixa e espaços extras. */
+function normalizeName(s?: string | null) {
+  return (s ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
 }
