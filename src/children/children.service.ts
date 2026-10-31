@@ -18,6 +18,8 @@ type ListOpts = {
   schoolId?: string;
   category?: string;
   status?: 'available' | 'assigned';
+  /** com/sem foto (na campanha, quando informada) */
+  photo?: 'with' | 'without';
   minAge?: number;
   maxAge?: number;
 };
@@ -152,6 +154,7 @@ export class ChildrenService {
       schoolId,
       category,
       status,
+      photo,
       minAge,
       maxAge,
     }: ListOpts,
@@ -181,6 +184,15 @@ export class ChildrenService {
 
     // —— categoria —— //
     if (category) where.category = { equals: category };
+
+    // —— com/sem foto: na campanha (se informada) ou em qualquer campanha —— //
+    if (photo === 'without' || photo === 'with') {
+      const imageWhere = campaignId ? { campaignId } : {};
+      where.AND = [
+        ...(where.AND ?? []),
+        { images: photo === 'without' ? { none: imageWhere } : { some: imageWhere } },
+      ];
+    }
 
     // —— busca textual (name / wantedGift / category) —— //
     if (q && q.trim()) {
@@ -299,7 +311,8 @@ export class ChildrenService {
       const campaignFolder = String(campaign?.publicId ?? campaign?.id ?? '');
 
       for (const c of children as any[]) {
-        if ((c.images?.length ?? 0) > 0) continue;
+        // "só layout" (sem foto) não conta: ainda vale procurar a foto no disco
+        if ((c.images ?? []).some((i: any) => !i.placeholder)) continue;
         if (!c.city) continue;
 
         const cityFolder = String(c.city.publicId ?? c.city.id);
@@ -566,6 +579,26 @@ export class ChildrenService {
     return where;
   }
 
+
+  /** Categorias existentes (mais usadas primeiro) e pares presente → categoria já cadastrados. */
+  async categoryHints() {
+    const rows = await this.prisma.child.groupBy({
+      by: ['category', 'wantedGift'],
+      where: { deletedAt: null, category: { not: null } },
+      _count: { _all: true },
+    });
+    const totals = new Map<string, number>();
+    const gifts: { gift: string; category: string; count: number }[] = [];
+    for (const r of rows) {
+      const category = (r.category ?? '').trim();
+      if (!category) continue;
+      totals.set(category, (totals.get(category) ?? 0) + r._count._all);
+      const gift = (r.wantedGift ?? '').trim();
+      if (gift) gifts.push({ gift, category, count: r._count._all });
+    }
+    const categories = Array.from(totals, ([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count);
+    return { categories, gifts };
+  }
 
   async listCategories(opts: CategoryOpts) {
     const where = this.buildWhereForCategories(opts);

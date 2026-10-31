@@ -54,7 +54,24 @@ export function applyCampaignImage<T extends { images?: ImageLike[]; cityId?: st
   layouts?: CampaignLayouts,
 ): T {
   const images = Array.isArray(child.images) ? child.images : [];
-  if (!images.length) return child;
+  if (!images.length) {
+    // ainda sem foto: só o layout da comunidade/cidade, com a área da foto vazia
+    const frame = resolveFrame(layouts, child.cityId)?.frame ?? null;
+    if (frame) {
+      child.images = [{
+        id: null,
+        placeholder: true,
+        campaignId,
+        originalUrl: null,
+        processedUrl: null,
+        framedUrl: null,
+        layoutKey: frame.key,
+        layoutUrl: frame.url,
+        Config: frame.config ?? null,
+      }];
+    }
+    return child;
+  }
 
   const own = images.filter((i) => i.campaignId === campaignId).sort((a, b) => time(b) - time(a))[0];
   const base = own ?? [...images].sort((a, b) => time(b) - time(a))[0];

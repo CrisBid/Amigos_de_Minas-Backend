@@ -74,6 +74,7 @@ export class ChildrenController {
     @Query('status') status?: 'available' | 'assigned',
     @Query('minAge') minAgeStr?: string,
     @Query('maxAge') maxAgeStr?: string,
+    @Query('photo') photo?: 'with' | 'without',
   ) {
     const DEFAULT_TAKE = 24;
     const MAX_TAKE = 100;
@@ -96,11 +97,18 @@ export class ChildrenController {
         schoolId,
         category,
         status,
+        photo: photo === 'with' || photo === 'without' ? photo : undefined,
         minAge,
         maxAge,
       },
       { skip, take },
     );
+  }
+
+  /** Categorias já usadas no cadastro e os presentes de cada uma (para sugerir categoria no cadastro guiado) */
+  @Get('category-hints')
+  categoryHints() {
+    return this.service.categoryHints();
   }
 
   @Get('categories')
