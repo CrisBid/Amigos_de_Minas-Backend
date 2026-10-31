@@ -18,6 +18,8 @@ import { CollectionPointsModule } from './collection-points/collection-points.mo
 import { ExportSponsorshipsModule } from './modules/exports/export-sponsorships.module';
 import { SponsorsModule } from './sponsors/sponsors.module';
 import { ChildrenExportModule } from './exports/children/export-children.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -45,7 +47,9 @@ import { ChildrenExportModule } from './exports/children/export-children.module'
     ChildImagesModule,
     CollectionPointsModule,
     ExportSponsorshipsModule,
-    ChildrenExportModule
+    ChildrenExportModule,
+    DashboardModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}

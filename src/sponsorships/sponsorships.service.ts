@@ -4,6 +4,7 @@ import { UpdateSponsorshipDto, SponsorshipMethod } from './dto/sponsorships.dto'
 import { Prisma, SponsorshipStatus } from '@prisma/client'; // 👈 usar enum do Prisma
 import { applySponsorshipCampaignData, campaignDataSelect } from '../common/child-campaign-data';
 import { applyCampaignImage, loadCampaignLayouts } from '../common/campaign-images';
+import { NotificationsService } from '../notifications/notifications.service';
 
 type AppUser = { sub: string; roles?: string[] };
 
@@ -33,7 +34,10 @@ type CreateManyArgs = {
 
 @Injectable()
 export class SponsorshipsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationsService,
+  ) {}
 
   // ========= SELECTS/INCLUDES PADRÃO (reuso) =========
 
@@ -151,7 +155,7 @@ export class SponsorshipsService {
       if (!exists) throw new BadRequestException('Ponto de coleta inválido.');
     }
 
-    return this.prisma.sponsorship.create({
+    const created = await this.prisma.sponsorship.create({
       data: {
         childId,
         sponsorId: sponsorUserId,
@@ -165,6 +169,8 @@ export class SponsorshipsService {
       },
       select: this.sponsorshipSelectForMe,
     });
+    this.notifications.pendingCreated([created.id]);
+    return created;
   }
 
   /** Criação em massa */
@@ -222,6 +228,7 @@ export class SponsorshipsService {
         })
       )
     );
+    this.notifications.pendingCreated(createdItems.map((s) => s.id));
 
     return {
       created: createdItems.length,
