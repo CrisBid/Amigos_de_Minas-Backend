@@ -49,6 +49,24 @@ export class CampaignFramesController {
     return created;
   }
 
+  // PUT /campaign-frames/:frameId/file  (form-data: file) → troca só a imagem do layout
+  @Roles('ADMIN','STAFF')
+  @Put('campaign-frames/:frameId/file')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 12 * 1024 * 1024 },
+      fileFilter: (req, file, cb) => {
+        const ok = /image\/(png|jpeg|webp|avif)/.test(file.mimetype);
+        cb(ok ? null : new Error('Tipo de arquivo inválido'), ok);
+      },
+    }),
+  )
+  replaceFile(@Param('frameId') frameId: string, @UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('Arquivo ausente');
+    return this.frames.replaceFile(frameId, file);
+  }
+
   // GET /campaigns/:id/city-layouts  → [{ cityId, frameId }]
   @Roles('ADMIN','STAFF')
   @Get('campaigns/:id/city-layouts')

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/storage/storage.service';
 
@@ -32,6 +33,43 @@ export class CampaignFramesService {
     });
 
     return created;
+  }
+
+  /**
+   * Troca só a imagem do layout, mantendo nome, enquadramento, padrão e as cidades que o usam.
+   * O arquivo novo ganha outra chave (a URL antiga fica em cache no navegador) e as fotos já
+   * montadas com o layout passam a apontar para ele, conservando os ajustes de cada uma.
+   */
+  async replaceFile(frameId: string, file: { buffer: Buffer; mimetype: string }) {
+    const frame = await this.prisma.campaignFrame.findUnique({ where: { id: frameId } });
+    if (!frame) throw new NotFoundException('Layout não encontrado');
+
+    const ext = (file.mimetype.split('/')[1] || 'png').toLowerCase();
+    const dir = frame.key.includes('/') ? frame.key.slice(0, frame.key.lastIndexOf('/')) : 'layouts';
+    const key = `${dir}/layout-${Date.now()}.${ext}`;
+    await this.storage.saveBuffer(key, file.buffer);
+    const url = this.storage.publicUrl(key);
+
+    const [updated, images] = await this.prisma.$transaction([
+      this.prisma.campaignFrame.update({ where: { id: frameId }, data: { key, url, mime: file.mimetype } }),
+      // arte pronta antiga tem a moldura velha: com enquadramento salvo, o site remonta com a nova
+      this.prisma.childImage.updateMany({
+        where: { campaignId: frame.campaignId, layoutKey: frame.key },
+        data: { layoutKey: key, layoutUrl: url },
+      }),
+      this.prisma.childImage.updateMany({
+        where: { campaignId: frame.campaignId, layoutKey: key, Config: { not: Prisma.DbNull } },
+        data: { framedUrl: null },
+      }),
+      // campos antigos da campanha (retrocompat) apontando para este arquivo
+      this.prisma.campaign.updateMany({
+        where: { id: frame.campaignId, frameKey: frame.key },
+        data: { frameKey: key, frameUrl: url },
+      }),
+    ]);
+
+    await this.storage.deleteByKey(frame.key).catch(() => {});
+    return { ...updated, imagesUpdated: images.count };
   }
 
   async setActive(frameId: string) {
