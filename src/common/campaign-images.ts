@@ -44,9 +44,10 @@ const time = (img: ImageLike) => new Date((img.createdAt ?? img.updatedAt ?? 0) 
 
 /**
  * Deixa em `child.images` uma única imagem, montada para a campanha: a foto da
- * própria campanha (ou, para crianças migradas sem foto nova, a mais recente que
- * tiverem) com o layout atual da cidade da criança nesta campanha (ou o padrão).
+ * própria campanha com o layout atual da cidade da criança nesta campanha (ou o padrão).
  * Assim o layout por cidade vale mesmo para fotos enviadas antes de ele ser definido.
+ * Sem foto nesta campanha (criança nova ou migrada sem foto nova), fica só o layout com
+ * a área da foto vazia — a foto de campanhas anteriores não é reaproveitada.
  */
 export function applyCampaignImage<T extends { images?: ImageLike[]; cityId?: string | null }>(
   child: T,
@@ -54,9 +55,11 @@ export function applyCampaignImage<T extends { images?: ImageLike[]; cityId?: st
   layouts?: CampaignLayouts,
 ): T {
   const images = Array.isArray(child.images) ? child.images : [];
-  if (!images.length) {
-    // ainda sem foto: só o layout da comunidade/cidade, com a área da foto vazia
+  const own = images.filter((i) => i.campaignId === campaignId).sort((a, b) => time(b) - time(a))[0];
+  if (!own) {
+    // ainda sem foto nesta campanha: só o layout da comunidade/cidade, com a área da foto vazia
     const frame = resolveFrame(layouts, child.cityId)?.frame ?? null;
+    child.images = [];
     if (frame) {
       child.images = [{
         id: null,
@@ -73,12 +76,11 @@ export function applyCampaignImage<T extends { images?: ImageLike[]; cityId?: st
     return child;
   }
 
-  const own = images.filter((i) => i.campaignId === campaignId).sort((a, b) => time(b) - time(a))[0];
-  const base = own ?? [...images].sort((a, b) => time(b) - time(a))[0];
+  const base = own;
   const frame = resolveFrame(layouts, child.cityId)?.frame ?? null;
 
   // a arte pronta e o enquadramento salvos só servem se foram feitos com este mesmo layout
-  const sameLayout = !!own && (!frame || own.layoutKey === frame.key);
+  const sameLayout = !frame || own.layoutKey === frame.key;
 
   const config = sameLayout ? (base.Config ?? frame?.config ?? null) : (frame?.config ?? base.Config ?? null);
 

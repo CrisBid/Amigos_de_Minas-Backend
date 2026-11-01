@@ -365,7 +365,7 @@ export class ChildrenService {
    * Histórico da criança: todas as campanhas de que participou (foto publicada,
    * migração ou apadrinhamento), com ID, presente, foto, layout e apadrinhamentos de cada uma.
    * `image` é a foto enviada para a própria campanha; `display` é o que o site mostra
-   * (foto da campanha ou, se não houver, a mais recente, montada com o layout atual).
+   * (foto da campanha montada com o layout atual ou, sem foto, só o layout com a área vazia).
    */
   async campaignHistory(childId: string) {
     const child = await this.prisma.child.findUnique({
@@ -451,16 +451,17 @@ export class ChildrenService {
   }
 
   /**
-   * Miniatura quadrada da FOTO da criança (sem moldura), para listagens. Usa a foto
-   * da campanha (se informada) ou a mais recente; gera uma vez e reaproveita do disco.
+   * Miniatura quadrada da FOTO da criança (sem moldura), para listagens. Com campanha,
+   * só a foto dela (sem foto nesta campanha = sem miniatura); sem campanha, a mais recente.
+   * Gera uma vez e reaproveita do disco.
    */
   async thumbnail(childId: string, width: number, campaignId?: string) {
     const select = { id: true, processedKey: true, originalKey: true } as const;
-    const img =
-      (campaignId
-        ? await this.prisma.childImage.findFirst({ where: { childId, campaignId }, orderBy: { createdAt: 'desc' }, select })
-        : null) ??
-      (await this.prisma.childImage.findFirst({ where: { childId }, orderBy: { createdAt: 'desc' }, select }));
+    const img = await this.prisma.childImage.findFirst({
+      where: { childId, ...(campaignId ? { campaignId } : {}) },
+      orderBy: { createdAt: 'desc' },
+      select,
+    });
     if (!img) throw new NotFoundException('Criança sem foto');
 
     const srcKey = img.processedKey || img.originalKey;
