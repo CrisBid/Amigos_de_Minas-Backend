@@ -250,6 +250,7 @@ model Community {
   deletedAt   DateTime?
 
   schools     School[]
+  schoolLinks SchoolCommunity[]
   children    Child[]
 
   @@unique([cityId, name])         // Evita comunidades duplicadas na mesma cidade
@@ -262,8 +263,12 @@ model School {
   cityId      String
   city        City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
 
+  // LEGADO: primeira comunidade da escola (mantida em sincronia com `communities`)
   communityId String?
   community   Community? @relation(fields: [communityId], references: [id], onDelete: SetNull)
+
+  // comunidades atendidas: uma escola pode receber crianças de mais de uma comunidade
+  communities SchoolCommunity[]
 
   name        String
   slug        String?
@@ -277,6 +282,18 @@ model School {
 
   @@unique([cityId, name])         // Nome de escola único por cidade
   @@index([cityId, communityId, name])
+}
+
+/** Escola × comunidade (N:N): quais comunidades frequentam cada escola. */
+model SchoolCommunity {
+  schoolId    String
+  school      School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([schoolId, communityId])
+  @@index([communityId])
 }
 
 model CollectionPoint {

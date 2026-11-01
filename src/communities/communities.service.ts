@@ -99,7 +99,18 @@ export class CommunitiesService {
     const [updated] = await this.prisma.$transaction([
       updateCommunity,
       this.prisma.child.updateMany({ where: { communityId: id }, data: { cityId, cityName: city!.name } }),
-      this.prisma.school.updateMany({ where: { communityId: id }, data: { cityId } }),
+      // escolas só desta comunidade vão junto; as compartilhadas ficam e perdem o vínculo com ela
+      this.prisma.school.updateMany({
+        where: { communities: { some: { communityId: id }, every: { communityId: id } } },
+        data: { cityId },
+      }),
+      this.prisma.schoolCommunity.deleteMany({
+        where: { communityId: id, school: { communities: { some: { communityId: { not: id } } } } },
+      }),
+      this.prisma.school.updateMany({
+        where: { communityId: id, communities: { none: { communityId: id } } },
+        data: { communityId: null },
+      }),
     ]);
     return updated;
   }

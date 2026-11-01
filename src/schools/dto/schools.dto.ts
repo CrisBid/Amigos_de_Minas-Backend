@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsNotEmpty, IsInt, Min, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, IsNotEmpty, IsInt, Min, IsBoolean, IsArray } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateSchoolDto {
@@ -7,7 +7,11 @@ export class CreateSchoolDto {
 
   @IsOptional()
   @IsString() // era IsUUID()
-  communityId?: string;
+  communityId?: string; // legado: uma comunidade só
+
+  // comunidades atendidas pela escola (tem prioridade sobre communityId)
+  @IsOptional() @IsArray() @IsString({ each: true })
+  communityIds?: string[];
 
   @IsString()
   @IsNotEmpty()
@@ -20,6 +24,7 @@ export class CreateSchoolDto {
 
 export class UpdateSchoolDto {
   @IsOptional() @IsString() communityId?: string; // era IsUUID()
+  @IsOptional() @IsArray() @IsString({ each: true }) communityIds?: string[];
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() slug?: string;
   @IsOptional() @IsString() address?: string;
