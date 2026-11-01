@@ -70,6 +70,7 @@ export class CampaignsController {
       newChildren?: NewChildItem[];
       cityId?: string;
       communityId?: string | null;
+      schoolId?: string | null;
     },
   ) {
     return this.service.addIncludedChildren(id, {
@@ -79,6 +80,7 @@ export class CampaignsController {
       newChildren: Array.isArray(body?.newChildren) ? body.newChildren.filter((n) => n && typeof n.name === 'string') : [],
       cityId: body?.cityId,
       communityId: body?.communityId,
+      schoolId: body?.schoolId,
     });
   }
 

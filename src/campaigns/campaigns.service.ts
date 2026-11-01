@@ -22,6 +22,9 @@ export type NewChildItem = {
   motherName?: string | null;
   wantedGift?: string | null;
   publicId?: number | null; // ID nesta campanha
+  // vínculos desta criança (sem valor = os do lote: `communityId` / `schoolId` das opções)
+  communityId?: string | null;
+  schoolId?: string | null;
 };
 
 type AddIncludedChildrenOpts = {
@@ -31,6 +34,7 @@ type AddIncludedChildrenOpts = {
   newChildren?: NewChildItem[];
   cityId?: string;
   communityId?: string | null;
+  schoolId?: string | null;
 };
 
 type MigrationCandidatesParams = { sourceCampaignId?: string; cityId?: string; communityId?: string };
@@ -253,9 +257,15 @@ export class CampaignsService {
    * ID principal do cadastro (senão usamos o próximo número livre).
    */
   async addIncludedChildren(campaignId: string, opts: AddIncludedChildrenOpts) {
-    const { sourceCampaignId, cityId, communityId } = opts;
+    const { sourceCampaignId, cityId } = opts;
     const items = opts.items ?? [];
-    const newChildren = (opts.newChildren ?? []).filter((n) => String(n?.name ?? '').trim());
+    const newChildren = (opts.newChildren ?? [])
+      .filter((n) => String(n?.name ?? '').trim())
+      .map((n) => ({
+        ...n,
+        communityId: n.communityId || opts.communityId || null,
+        schoolId: n.schoolId || opts.schoolId || null,
+      }));
 
     await this.getByIdOrThrow(campaignId);
     const ids = Array.from(new Set([...(opts.childIds ?? []), ...items.map((i) => i.childId)].filter(Boolean)));
@@ -267,10 +277,19 @@ export class CampaignsService {
       if (!cityId) throw new BadRequestException('Informe a cidade para cadastrar as crianças novas.');
       city = await this.prisma.city.findUnique({ where: { id: cityId }, select: { id: true, name: true } });
       if (!city) throw new BadRequestException('Cidade não encontrada.');
-      if (communityId) {
-        const community = await this.prisma.community.findUnique({ where: { id: communityId }, select: { cityId: true } });
-        if (!community || community.cityId !== city.id) throw new BadRequestException('Comunidade não encontrada nesta cidade.');
-      }
+
+      const communityIds = [...new Set(newChildren.map((n) => n.communityId).filter((v): v is string => !!v))];
+      const schoolIds = [...new Set(newChildren.map((n) => n.schoolId).filter((v): v is string => !!v))];
+      const [communities, schools] = await Promise.all([
+        communityIds.length
+          ? this.prisma.community.findMany({ where: { id: { in: communityIds }, cityId: city.id, deletedAt: null }, select: { id: true } })
+          : [],
+        schoolIds.length
+          ? this.prisma.school.findMany({ where: { id: { in: schoolIds }, cityId: city.id, deletedAt: null }, select: { id: true } })
+          : [],
+      ]);
+      if (communities.length !== communityIds.length) throw new BadRequestException('Comunidade não encontrada nesta cidade.');
+      if (schools.length !== schoolIds.length) throw new BadRequestException('Escola não encontrada nesta cidade.');
     }
 
     const children = await this.prisma.child.findMany({
@@ -381,7 +400,8 @@ export class CampaignsService {
             wantedGift: f.gift || null,
             cityId: city!.id,
             cityName: city!.name,
-            communityId: communityId || null,
+            communityId: f.communityId,
+            schoolId: f.schoolId,
             campaignIncludes: { create: { campaignId } },
             campaignData: { create: { campaignId, publicId: f.publicId, wantedGift: f.gift || null } },
           },
