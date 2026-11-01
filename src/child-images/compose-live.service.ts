@@ -292,7 +292,10 @@ export class ComposeLiveService {
       name: childFull?.name ?? child.name ?? '',
       publicId: String((childFull as any)?.campaignData?.[0]?.publicId ?? childFull?.publicId ?? child.publicId ?? ''),
       age,
-      wantedGift: (childFull as any)?.campaignData?.[0]?.wantedGift ?? childFull?.wantedGift ?? child.wantedGift ?? '',
+      // com registro nesta campanha vale o presente dele (mesmo vazio); o do cadastro pode ser de outra campanha
+      wantedGift: (childFull as any)?.campaignData?.[0]
+        ? ((childFull as any).campaignData[0].wantedGift ?? '')
+        : (childFull?.wantedGift ?? child.wantedGift ?? ''),
       cityName: childFull?.city?.name ?? (child as any).cityName ?? '',
       communityName: (childFull as any)?.community?.name ?? (child as any).communityName ?? '',
     };

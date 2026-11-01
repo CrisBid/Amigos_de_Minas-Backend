@@ -296,6 +296,9 @@ export class ChildrenService {
       },
     });
 
+    // as pastas de fotos no disco usam o ID PRINCIPAL; guarda antes de trocar pelo ID da campanha
+    const folderIdByChild = new Map(children.map((c) => [c.id, c.publicId]));
+
     if (campaignId) {
       // ID/presente desta campanha e a imagem montada com o layout da cidade nesta campanha
       const layouts = (await loadCampaignLayouts(this.prisma, [campaignId])).get(campaignId);
@@ -316,7 +319,9 @@ export class ChildrenService {
         if (!c.city) continue;
 
         const cityFolder = String(c.city.publicId ?? c.city.id);
-        const childFolder = c.publicId;
+        // NÃO usar c.publicId aqui: já é o ID da campanha, e a pasta com esse número pode ser de outra criança
+        const childFolder = folderIdByChild.get(c.id);
+        if (childFolder == null) continue;
 
         const framedKey    = `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/framed.webp`;
         const processedKey = `campaigns/${campaignFolder}/${cityFolder}/${childFolder}/processed.webp`;

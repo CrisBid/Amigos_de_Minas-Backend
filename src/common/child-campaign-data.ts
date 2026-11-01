@@ -8,13 +8,15 @@ type CampaignData = { campaignId: string; publicId: number | null; wantedGift: s
 /**
  * Troca `publicId` e `wantedGift` da criança pelos registrados na campanha
  * (quando houver) e remove `campaignData` do objeto. Muta e retorna a criança.
+ * Com registro nesta campanha, o presente é o dele — mesmo vazio: o presente
+ * atual do cadastro pode ser o de outra campanha.
  */
 export function applyCampaignData<T extends Record<string, any> | null | undefined>(child: T, campaignId?: string | null): T {
   if (!child) return child;
   const list: CampaignData[] = Array.isArray(child.campaignData) ? child.campaignData : [];
   const data = campaignId ? list.find((d) => d.campaignId === campaignId) : undefined;
   if (data?.publicId != null) (child as any).publicId = data.publicId;
-  if (data?.wantedGift) (child as any).wantedGift = data.wantedGift;
+  if (data) (child as any).wantedGift = data.wantedGift?.trim() ? data.wantedGift : null;
   delete (child as any).campaignData;
   return child;
 }
