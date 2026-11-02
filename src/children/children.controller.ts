@@ -362,18 +362,6 @@ export class ChildrenController {
     if (!file) throw new BadRequestException('Arquivo ausente');
     if (!campaignId) throw new BadRequestException('Informe campaignId na query.');
 
-    // --- resolve criança: por id (UUID) OU publicId numérico ---
-    const numericChildId = parseInt(String(id).trim(), 10);
-    const child =
-      (await this.prisma.child.findUnique({ where: { id } })) ||
-      (Number.isFinite(numericChildId)
-        ? // use findUnique se publicId for unique no schema; caso contrário, findFirst:
-          (await this.prisma.child.findUnique({ where: { publicId: numericChildId } }).catch(() => null)) ||
-          (await this.prisma.child.findFirst({ where: { publicId: numericChildId } }))
-        : null);
-
-    if (!child) throw new NotFoundException('Criança não encontrada');
-
     // --- resolve campanha: por id (UUID) OU publicId numérico ---
     const numericCampaignId = parseInt(String(campaignId).trim(), 10);
     const campaign =
@@ -383,6 +371,29 @@ export class ChildrenController {
         : null);
 
     if (!campaign) throw new BadRequestException('Campanha não encontrada');
+
+    // --- resolve criança: por id interno OU por número. O número é o ID NESTA campanha
+    // (a numeração muda entre campanhas); o ID principal só vale para quem não tem outro
+    // número nesta campanha — senão a foto iria para outra criança com aquele ID principal.
+    let child = await this.prisma.child.findUnique({ where: { id } });
+    const numericChildId = /^\d+$/.test(String(id).trim()) ? parseInt(String(id).trim(), 10) : NaN;
+    if (!child && Number.isFinite(numericChildId)) {
+      const inCampaign = await this.prisma.childCampaignData.findUnique({
+        where: { campaignId_publicId: { campaignId: campaign.id, publicId: numericChildId } },
+        select: { child: true },
+      });
+      child = inCampaign?.child ?? null;
+      if (!child) {
+        const byMain = await this.prisma.child.findUnique({
+          where: { publicId: numericChildId },
+          include: { campaignData: { where: { campaignId: campaign.id }, select: { publicId: true } } },
+        });
+        const otherNumber = byMain?.campaignData[0]?.publicId;
+        if (byMain && (otherNumber == null || otherNumber === numericChildId)) child = byMain;
+      }
+    }
+
+    if (!child) throw new NotFoundException('Criança não encontrada');
 
     // cidade (para pasta). Se não tiver cityId, usa marcador.
     const city = child.cityId
