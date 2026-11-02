@@ -133,8 +133,13 @@ export class StorageService {
     }
 
     const baseBuf = await base.webp({ quality: 88 }).toBuffer();
+    // o layout vai no tamanho da arte (como no site): um PNG maior que a arte faz o sharp recusar a composição
+    const frameFit =
+      fMeta.width === W && fMeta.height === H
+        ? frame
+        : await sharp(frame, { failOnError: false }).resize(W, H, { fit: 'fill' }).png().toBuffer();
     return sharp(baseBuf, { failOnError: false })
-      .composite([{ input: frame, gravity: 'center' }])
+      .composite([{ input: frameFit, gravity: 'center' }])
       .webp({ quality: 88 })
       .toBuffer();
   }

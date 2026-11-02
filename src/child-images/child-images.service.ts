@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/storage/storage.service';
 
@@ -12,6 +12,8 @@ type ComposeOpts = {
 
 @Injectable()
 export class ChildImagesService {
+  private readonly log = new Logger(ChildImagesService.name);
+
   constructor(
     private prisma: PrismaService,
     private storage: StorageService,
@@ -127,35 +129,40 @@ export class ChildImagesService {
     const gravity = c.photoRect?.gravity ?? c.gravity ?? 'center';
     const cornerRadius = c.photoRect?.cornerRadius ?? c.cornerRadius ?? 0;
 
-    // Regerar framed se tiver layout e processed
+    // Regerar framed (arte de reserva) se tiver layout e processed. O site monta a arte com o
+    // Config; se a reserva falhar (arquivo sumido, imagem inválida), a composição é salva mesmo assim.
     if (img.layoutKey && img.processedKey) {
-      const base = await this.storage.readBufferByKey(img.processedKey);
-      const frame = await this.storage.readBufferByKey(img.layoutKey);
-      const composed = await this.storage.compositeFramed({
-        photo: base,
-        frame,
-        width,
-        height,
-        fit,
-        gravity,
-        cornerRadius,
-      });
-      // salva uma nova versão framed (na pasta da framed atual, ou da processed se ainda não houver)
-      const pathParts = (img.framedKey ?? img.processedKey).split('/');
-      pathParts[pathParts.length - 1] = `framed-${Date.now()}.webp`;
-      const newKey = pathParts.join('/');
-      await this.storage.saveBuffer(newKey, composed);
+      try {
+        const base = await this.storage.readBufferByKey(img.processedKey);
+        const frame = await this.storage.readBufferByKey(img.layoutKey);
+        const composed = await this.storage.compositeFramed({
+          photo: base,
+          frame,
+          width,
+          height,
+          fit,
+          gravity,
+          cornerRadius,
+        });
+        // salva uma nova versão framed (na pasta da framed atual, ou da processed se ainda não houver)
+        const pathParts = (img.framedKey ?? img.processedKey).split('/');
+        pathParts[pathParts.length - 1] = `framed-${Date.now()}.webp`;
+        const newKey = pathParts.join('/');
+        await this.storage.saveBuffer(newKey, composed);
 
-      return this.prisma.childImage.update({
-        where: { id: imageId },
-        data: {
-          framedKey: newKey,
-          framedUrl: this.storage.publicUrl(newKey),
-          Config: compose as any,
-          status: 'COMPOSED',
-          version: (img.version ?? 1) + 1,
-        },
-      });
+        return this.prisma.childImage.update({
+          where: { id: imageId },
+          data: {
+            framedKey: newKey,
+            framedUrl: this.storage.publicUrl(newKey),
+            Config: compose as any,
+            status: 'COMPOSED',
+            version: (img.version ?? 1) + 1,
+          },
+        });
+      } catch (e: any) {
+        this.log.warn(`Arte de reserva não gerada para a imagem ${imageId}: ${e?.message ?? e}`);
+      }
     }
 
     // Sem layout → apenas salva composeConfig
