@@ -4,7 +4,8 @@ import { Injectable, Logger } from '@nestjs/common';
  * Envio de e-mail por SMTP (nodemailer). Fica desligado — sem erro — enquanto
  * SMTP_HOST não estiver configurado ou o pacote `nodemailer` não estiver instalado.
  *
- * Variáveis: SMTP_HOST, SMTP_PORT (587), SMTP_USER, SMTP_PASS, SMTP_SECURE (true p/ 465), MAIL_FROM.
+ * Variáveis: SMTP_HOST, SMTP_PORT (587), SMTP_USER, SMTP_PASS, SMTP_SECURE (true p/ 465),
+ * SMTP_FROM (ou MAIL_FROM) = remetente, ex.: "Amigos de Minas <contato@...>".
  */
 @Injectable()
 export class MailService {
@@ -45,7 +46,7 @@ export class MailService {
   async send(msg: { to: string; subject: string; html: string; text: string }): Promise<boolean> {
     const t = this.getTransporter();
     if (!t) return false;
-    await t.sendMail({ from: process.env.MAIL_FROM || process.env.SMTP_USER, ...msg });
+    await t.sendMail({ from: process.env.SMTP_FROM || process.env.MAIL_FROM || process.env.SMTP_USER, ...msg });
     return true;
   }
 }
