@@ -24,6 +24,24 @@ type ListOpts = {
   maxAge?: number;
 };
 
+/** Valor do filtro de categoria para as crianças sem categoria */
+const NO_CATEGORY = '__none__';
+
+/** Sem acentos e em minúsculas, para a busca achar "joao" em "JOÃO" */
+const normalizeSearch = (s?: string | null) =>
+  (s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+type FilterOptionsOpts = {
+  campaignId?: string;
+  q?: string;
+  cityId?: string;
+  communityId?: string;
+  category?: string;
+  status?: 'available' | 'assigned';
+  minAge?: number;
+  maxAge?: number;
+};
+
 type CategoryOpts = {
   campaignId?: string;
   q?: string;
@@ -142,6 +160,154 @@ export class ChildrenService {
     return Object.keys(range).length ? range : undefined;
   }
 
+  /** Pertence à campanha: tem foto publicada para ela OU foi migrada manualmente para ela */
+  private rosterWhere(campaignId: string): Prisma.ChildWhereInput {
+    return {
+      OR: [
+        { images: { some: { campaignId } } },
+        { campaignIncludes: { some: { campaignId } } },
+      ],
+    };
+  }
+
+  /**
+   * Idade pela data de nascimento; quem não tem a data entra pela idade informada no cadastro
+   * (senão essas crianças sumiriam de todas as faixas).
+   */
+  private buildAgeWhere(minAge?: number, maxAge?: number): Prisma.ChildWhereInput | null {
+    const range = this.buildBirthDateRange(minAge, maxAge);
+    if (!range) return null;
+    return {
+      OR: [
+        { birthDate: range },
+        {
+          birthDate: null,
+          age: {
+            ...(typeof minAge === 'number' ? { gte: minAge } : {}),
+            ...(typeof maxAge === 'number' ? { lte: maxAge } : {}),
+          },
+        },
+      ],
+    };
+  }
+
+  /** Ocupada (ou não) nesta campanha, com os mesmos status que a listagem devolve */
+  private buildStatusWhere(status?: 'available' | 'assigned', campaignId?: string): Prisma.ChildWhereInput | null {
+    if (status !== 'available' && status !== 'assigned') return null;
+    const busy: Prisma.SponsorshipWhereInput = {
+      ...(campaignId ? { campaignId } : {}),
+      status: { in: ChildrenService.BUSY_STATUSES },
+    };
+    return { sponsorships: status === 'assigned' ? { some: busy } : { none: busy } };
+  }
+
+  /**
+   * Busca: um número é o ID da criança (o ID desta campanha, quando informada); texto procura
+   * cada palavra no nome, no presente da campanha e na categoria, ignorando acentos e a ordem.
+   * O banco não compara sem acento, por isso as palavras são conferidas aqui.
+   */
+  private async buildSearchWhere(q?: string, campaignId?: string): Promise<Prisma.ChildWhereInput | null> {
+    const query = (q ?? '').trim();
+    if (!query) return null;
+
+    if (/^\d{1,9}$/.test(query)) {
+      const n = parseInt(query, 10);
+      if (!campaignId) return { OR: [{ publicId: n }, { campaignData: { some: { publicId: n } } }] };
+      // o ID principal só vale para quem não tem outro número nesta campanha
+      return {
+        OR: [
+          { campaignData: { some: { campaignId, publicId: n } } },
+          { publicId: n, NOT: { campaignData: { some: { campaignId, publicId: { not: null } } } } },
+        ],
+      };
+    }
+
+    const words = normalizeSearch(query).split(/\s+/).filter(Boolean);
+    const rows = await this.prisma.child.findMany({
+      where: { deletedAt: null, ...(campaignId ? this.rosterWhere(campaignId) : {}) },
+      select: {
+        id: true,
+        name: true,
+        wantedGift: true,
+        category: true,
+        ...(campaignId ? { campaignData: { where: { campaignId }, select: { wantedGift: true } } } : {}),
+      },
+    });
+    const ids = rows
+      .filter((c: any) => {
+        // com registro nesta campanha vale o presente dele (o do cadastro pode ser de outra campanha)
+        const gift = c.campaignData?.length ? c.campaignData[0].wantedGift : c.wantedGift;
+        const text = normalizeSearch(`${c.name} ${gift ?? ''} ${c.category ?? ''}`);
+        return words.every((w) => text.includes(w));
+      })
+      .map((c) => c.id);
+    return { id: { in: ids } };
+  }
+
+  /**
+   * Opções dos filtros da tela de apadrinhamento: só o que tem criança no recorte atual, com a
+   * contagem. Cada lista respeita os outros filtros (comunidades da cidade escolhida, escolas da
+   * comunidade escolhida, categorias do local escolhido).
+   */
+  async filterOptions({ campaignId, q, cityId, communityId, category, status, minAge, maxAge }: FilterOptionsOpts) {
+    const and = [
+      campaignId ? this.rosterWhere(campaignId) : null,
+      await this.buildSearchWhere(q, campaignId),
+      this.buildAgeWhere(minAge, maxAge),
+      this.buildStatusWhere(status, campaignId),
+    ].filter(Boolean) as Prisma.ChildWhereInput[];
+
+    const rows = await this.prisma.child.findMany({
+      where: { deletedAt: null, AND: and },
+      select: {
+        cityId: true,
+        communityId: true,
+        category: true,
+        city: { select: { id: true, name: true, state: true } },
+        community: { select: { id: true, name: true } },
+        school: { select: { id: true, name: true } },
+      },
+    });
+
+    const add = <T extends object>(map: Map<string, T & { count: number }>, key: string, value: T) => {
+      const item = map.get(key) ?? { ...value, count: 0 };
+      item.count++;
+      map.set(key, item);
+    };
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'pt-BR');
+    const hasCategory = (c: { category: string | null }) => !!c.category?.trim();
+    const matchesCategory = (c: { category: string | null }) =>
+      !category || (category === NO_CATEGORY ? !hasCategory(c) : c.category === category);
+
+    const cities = new Map<string, { id: string; name: string; state: string | null; count: number }>();
+    const communities = new Map<string, { id: string; name: string; count: number }>();
+    const schools = new Map<string, { id: string; name: string; count: number }>();
+    const categories = new Map<string, { category: string; count: number }>();
+    let noCategory = 0;
+
+    for (const c of rows) {
+      const inCity = !cityId || c.cityId === cityId;
+      const inCommunity = inCity && (!communityId || c.communityId === communityId);
+      if (matchesCategory(c)) {
+        if (c.city) add(cities, c.city.id, c.city);
+        if (inCity && c.community) add(communities, c.community.id, c.community);
+        if (inCommunity && c.school) add(schools, c.school.id, c.school);
+      }
+      if (inCommunity) {
+        if (hasCategory(c)) add(categories, c.category!, { category: c.category! });
+        else noCategory++;
+      }
+    }
+
+    return {
+      cities: [...cities.values()].sort(byName),
+      communities: [...communities.values()].sort(byName),
+      schools: [...schools.values()].sort(byName),
+      categories: [...categories.values()].sort((a, b) => a.category.localeCompare(b.category, 'pt-BR')),
+      noCategory,
+    };
+  }
+
   // LISTAGEM: inclui media da campanha e permite fallback (scan) do FS
   // children.service.ts
   async listPaginated(
@@ -165,17 +331,7 @@ export class ChildrenService {
 
     // —— pertence à campanha? só entram crianças com foto publicada para ela
     // OU migradas manualmente para ela (tela de migração seletiva) —— //
-    if (campaignId) {
-      where.AND = [
-        ...(where.AND ?? []),
-        {
-          OR: [
-            { images: { some: { campaignId } } },
-            { campaignIncludes: { some: { campaignId } } },
-          ],
-        },
-      ];
-    }
+    if (campaignId) where.AND = [...(where.AND ?? []), this.rosterWhere(campaignId)];
 
     // —— filtros relacionais por ID —— //
     if (cityId) where.cityId = cityId;
@@ -183,7 +339,11 @@ export class ChildrenService {
     if (schoolId) where.schoolId = schoolId;
 
     // —— categoria —— //
-    if (category) where.category = { equals: category };
+    if (category === NO_CATEGORY) {
+      where.AND = [...(where.AND ?? []), { OR: [{ category: null }, { category: '' }] }];
+    } else if (category) {
+      where.category = { equals: category };
+    }
 
     // —— com/sem foto: na campanha (se informada) ou em qualquer campanha —— //
     if (photo === 'without' || photo === 'with') {
@@ -194,74 +354,13 @@ export class ChildrenService {
       ];
     }
 
-    // —— busca textual (name / wantedGift / category) —— //
-    if (q && q.trim()) {
-      const query = q.trim();
-      where.OR = [
-        { name: { contains: query, mode: 'insensitive' } },
-        { wantedGift: { contains: query, mode: 'insensitive' } },
-        { category: { contains: query, mode: 'insensitive' } },
-      ];
-      // número: também pelo ID principal e pelo ID na campanha
-      if (/^\d{1,9}$/.test(query)) {
-        const n = parseInt(query, 10);
-        where.OR.push(
-          { publicId: n },
-          { campaignData: { some: { publicId: n, ...(campaignId ? { campaignId } : {}) } } },
-        );
-      }
-    }
-
-    // —— filtro por faixa etária via birthDate —— //
-    const birthDateRange = this.buildBirthDateRange(minAge, maxAge);
-    if (birthDateRange) {
-      where.birthDate = birthDateRange;
-    }
-
-    // —— status (available/assigned) —— //
-    // Consideramos "ocupado" se tiver sponsorship com status em ACTIVE/PENDING/COMPLETED/IN_PROGRESS.
-    // Escopo: se campaignId vier, filtramos por ela; senão, olhamos globalmente.
-
-    // Filtro por status (available/assigned)
-    if (status === 'assigned') {
-      if (campaignId) {
-        where.sponsorships = {
-          some: {
-            campaignId,
-            status: { in: ChildrenService.BUSY_STATUSES },
-          },
-        };
-      } else {
-        where.sponsorships = {
-          some: {
-            status: { in: ChildrenService.BUSY_STATUSES },
-          },
-        };
-      }
-    } else if (status === 'available') {
-      if (campaignId) {
-        where.AND = [
-          ...(where.AND ?? []),
-          {
-            sponsorships: {
-              none: {
-                campaignId,
-                status: { in: ChildrenService.BUSY_STATUSES },
-              },
-            },
-          },
-        ];
-      } else {
-        where.AND = [
-          ...(where.AND ?? []),
-          {
-            sponsorships: {
-              none: { status: { in: ChildrenService.BUSY_STATUSES } },
-            },
-          },
-        ];
-      }
-    }
+    // —— busca, faixa etária e status (available/assigned) —— //
+    const extra = [
+      await this.buildSearchWhere(q, campaignId),
+      this.buildAgeWhere(minAge, maxAge),
+      this.buildStatusWhere(status, campaignId),
+    ].filter(Boolean);
+    if (extra.length) where.AND = [...(where.AND ?? []), ...extra];
 
 
     // —— total para paginação (com os mesmos filtros) —— //
@@ -353,8 +452,9 @@ export class ChildrenService {
   }
 
 
-  get(id: string) {
-    return this.prisma.child.findUnique({ 
+  /** Com `campaignId`, o ID e o presente são os da criança nessa campanha */
+  async get(id: string, campaignId?: string) {
+    const child = await this.prisma.child.findUnique({
       where: { id },
       include: {
         city: true,
@@ -362,8 +462,10 @@ export class ChildrenService {
         school: true,
         sponsorships: true,
         images: true,
-      }
+        ...(campaignId ? { campaignData: { where: { campaignId }, ...campaignDataSelect } } : {}),
+      },
     });
+    return campaignId ? applyCampaignData(child, campaignId) : child;
   }
 
   /**

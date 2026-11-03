@@ -137,9 +137,26 @@ export class ChildrenController {
     });
   }
 
+  /** Opções dos filtros (cidades, comunidades, escolas e categorias) que têm crianças no recorte atual */
+  @Get('filter-options')
+  filterOptions(
+    @Query('campaignId') campaignId?: string,
+    @Query('q') q?: string,
+    @Query('cityId') cityId?: string,
+    @Query('communityId') communityId?: string,
+    @Query('category') category?: string,
+    @Query('status') status?: 'available' | 'assigned',
+    @Query('minAge') minAgeStr?: string,
+    @Query('maxAge') maxAgeStr?: string,
+  ) {
+    const minAge = Number.isFinite(Number(minAgeStr)) ? parseInt(String(minAgeStr), 10) : undefined;
+    const maxAge = Number.isFinite(Number(maxAgeStr)) ? parseInt(String(maxAgeStr), 10) : undefined;
+    return this.service.filterOptions({ campaignId, q, cityId, communityId, category, status, minAge, maxAge });
+  }
+
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.service.get(id);
+  get(@Param('id') id: string, @Query('campaignId') campaignId?: string) {
+    return this.service.get(id, campaignId || undefined);
   }
 
   /** Miniatura da foto (sem moldura) para listagens: ?w=96&campaignId=...&v=<id da imagem p/ cache> */
