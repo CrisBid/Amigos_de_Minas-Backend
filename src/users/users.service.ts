@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
@@ -29,7 +30,7 @@ export class UsersService {
 
     return this.prisma.user.findMany({
       where,
-      select: { id: true, name: true, email: true, phone: true, roles: true, createdAt: true },
+      select: { id: true, name: true, email: true, phone: true, roles: true, createdAt: true, updatedAt: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -55,5 +56,18 @@ export class UsersService {
       data:  { roles },
       select: { id: true, name: true, email: true, phone: true, roles: true, createdAt: true },
     });
+  }
+
+  /** Admin define uma nova senha: encerra as sessões abertas e invalida links de "esqueci minha senha" pendentes. */
+  async setPassword(id: string, password: string) {
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id }, data: { passwordHash, refreshHash: null } }),
+      this.prisma.passwordReset.updateMany({ where: { userId: id, usedAt: null }, data: { usedAt: new Date() } }),
+    ]);
+    return { ok: true };
   }
 }

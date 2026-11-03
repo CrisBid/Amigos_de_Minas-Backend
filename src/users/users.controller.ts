@@ -5,6 +5,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { ListUsersDto } from './dto/list-users.dto';
 import { UpdateUserRolesDto } from './dto/update-user-roles.dto';
+import { SetUserPasswordDto } from './dto/set-user-password.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN', 'STAFF')
@@ -26,5 +27,12 @@ export class UsersController {
   @Patch(':id')
   updateRoles(@Param('id') id: string, @Body() body: UpdateUserRolesDto) {
     return this.users.updateRoles(id, body.roles as any);
+  }
+
+  // PATCH /users/:id/password -> { password }  (somente ADMIN)
+  @Roles('ADMIN')
+  @Patch(':id/password')
+  setPassword(@Param('id') id: string, @Body() body: SetUserPasswordDto) {
+    return this.users.setPassword(id, body.password);
   }
 }
