@@ -6,6 +6,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { UpdateSponsorshipDto } from './dto/sponsorships.dto';
 import { CreateSponsorshipDto } from './dto/create-sponsorship.dto';
 import { TransferSponsorshipsDto } from './dto/transfer.dto';
+import { BulkDeleteSponsorshipsDto } from './dto/bulk-delete.dto';
 
 @Controller('sponsorships')
 @UseGuards(JwtAuthGuard)
@@ -69,6 +70,14 @@ export class SponsorshipsController {
   @Post('transfer')
   async transfer(@Body() dto: TransferSponsorshipsDto) {
     return this.service.transfer(dto.sponsorshipIds, dto.toSponsorId);
+  }
+
+  // POST /sponsorships/bulk-delete -> { sponsorshipIds: string[] }
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN','STAFF')
+  @Post('bulk-delete')
+  bulkDelete(@Body() dto: BulkDeleteSponsorshipsDto) {
+    return this.service.removeMany(dto.sponsorshipIds);
   }
 
   // PATCH genérico — regras no service

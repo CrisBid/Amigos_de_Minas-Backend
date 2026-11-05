@@ -447,14 +447,24 @@ export class SponsorshipsService {
     const isAdminOrStaff = roles.includes('ADMIN') || roles.includes('STAFF');
     const isSponsor = current.sponsorId === user?.sub;
 
-    if (isSponsor && current.status !== SponsorshipStatus.PENDING) {
-      throw new ForbiddenException('Você só pode excluir apadrinhamentos em estado PENDING.');
-    }
-    if (!isAdminOrStaff && !isSponsor) {
-      throw new ForbiddenException('Você não tem permissão para excluir este apadrinhamento.');
+    // admin/equipe excluem em qualquer status, mesmo quando também são o padrinho do vínculo
+    if (!isAdminOrStaff) {
+      if (!isSponsor) {
+        throw new ForbiddenException('Você não tem permissão para excluir este apadrinhamento.');
+      }
+      if (current.status !== SponsorshipStatus.PENDING) {
+        throw new ForbiddenException('Você só pode excluir apadrinhamentos em estado PENDING.');
+      }
     }
 
     await this.prisma.sponsorship.delete({ where: { id } });
     return { ok: true, deletedId: id };
+  }
+
+  /** Exclusão em lote (admin/equipe), ex.: todos os apadrinhamentos de um padrinho */
+  async removeMany(ids: string[]) {
+    const unique = [...new Set(ids.filter(Boolean))];
+    const { count } = await this.prisma.sponsorship.deleteMany({ where: { id: { in: unique } } });
+    return { ok: true, deleted: count };
   }
 }
