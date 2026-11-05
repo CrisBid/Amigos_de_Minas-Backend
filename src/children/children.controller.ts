@@ -75,6 +75,8 @@ export class ChildrenController {
     @Query('minAge') minAgeStr?: string,
     @Query('maxAge') maxAgeStr?: string,
     @Query('photo') photo?: 'with' | 'without',
+    // sort=photo: quem tem foto na campanha vem antes (tela de apadrinhamento)
+    @Query('sort') sort?: string,
   ) {
     const DEFAULT_TAKE = 24;
     const MAX_TAKE = 100;
@@ -100,6 +102,7 @@ export class ChildrenController {
         photo: photo === 'with' || photo === 'without' ? photo : undefined,
         minAge,
         maxAge,
+        photoFirst: sort === 'photo',
       },
       { skip, take },
     );
