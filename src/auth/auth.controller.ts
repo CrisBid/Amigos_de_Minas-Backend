@@ -3,7 +3,7 @@ import { AuthService } from './auth.service';
 import { PasswordResetService } from './password-reset.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
+import { ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('auth')
@@ -51,5 +51,13 @@ export class AuthController {
   @Get('me')
   me(@Req() req: any) {
     return this.auth.me(req.user);
+  }
+
+  // usuário logado troca a própria senha
+  @UseGuards(JwtAuthGuard)
+  @Post('change-password')
+  @HttpCode(200)
+  changePassword(@Req() req: any, @Body() dto: ChangePasswordDto) {
+    return this.auth.changePassword(req.user, dto.currentPassword, dto.newPassword);
   }
 }

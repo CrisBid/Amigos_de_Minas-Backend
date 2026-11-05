@@ -153,6 +153,23 @@ export class AuthService {
   async me(user: any) {
     const me = await this.prisma.user.findUnique({ where: { id: user.sub } });
     if (!me) throw new UnauthorizedException();
-    return { id: me.id, name: me.name, email: me.email, phone: me.phone, roles: me.roles };
+    return { id: me.id, name: me.name, email: me.email, phone: me.phone, roles: me.roles, createdAt: me.createdAt };
+  }
+
+  /** Usuário logado troca a própria senha (confere a atual antes) */
+  async changePassword(user: any, currentPassword: string, newPassword: string) {
+    const me = await this.prisma.user.findUnique({ where: { id: user?.sub }, select: { id: true, passwordHash: true } });
+    if (!me) throw new UnauthorizedException();
+    const ok = await bcrypt.compare(currentPassword, me.passwordHash);
+    if (!ok) throw new BadRequestException('Senha atual incorreta.');
+    if (currentPassword === newPassword) throw new BadRequestException('A nova senha precisa ser diferente da atual.');
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: me.id }, data: { passwordHash } }),
+      // links de "esqueci minha senha" pendentes deixam de valer
+      this.prisma.passwordReset.updateMany({ where: { userId: me.id, usedAt: null }, data: { usedAt: new Date() } }),
+    ]);
+    return { ok: true };
   }
 }

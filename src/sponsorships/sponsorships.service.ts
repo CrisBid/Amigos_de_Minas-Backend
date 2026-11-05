@@ -47,6 +47,7 @@ export class SponsorshipsService {
     publicId: true,
     name: true,
     age: true,
+    birthDate: true, // idade calculada na tela
     photoUrl: true,
     category: true,
     wantedGift: true,
