@@ -254,6 +254,30 @@ export class SponsorshipsService {
     });
   }
 
+  /**
+   * Dados para o PDF do admin: os apadrinhamentos escolhidos no mesmo formato de /me, com a
+   * imagem montada para a campanha de cada um. Sem foto nessa campanha vem só o layout
+   * (a foto de campanhas anteriores não é usada).
+   */
+  async forPdf(ids: string[]) {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (!unique.length) return [];
+    const rows = await this.prisma.sponsorship.findMany({
+      where: { id: { in: unique } },
+      select: { ...this.sponsorshipSelectForMe, sponsor: { select: { id: true, name: true } } },
+    });
+    const layouts = await loadCampaignLayouts(this.prisma, rows.map((r) => r.campaign.id));
+    const order = new Map(unique.map((id, i) => [id, i]));
+    return rows
+      .map((r) => {
+        applySponsorshipCampaignData(r);
+        applyCampaignImage(r.child as any, r.campaign.id, layouts.get(r.campaign.id));
+        return r;
+      })
+      // mesma ordem em que a tela pediu
+      .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  }
+
   async listAll(campaignId?: string) {
     const rows = await this.prisma.sponsorship.findMany({
       where: campaignId ? { campaignId } : undefined,
