@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ChildrenService } from './children.service';
+import { ChildrenUpdateService } from './children-update.service';
 import { ChildrenController } from './children.controller';
 import { ChildImagesModule } from '../child-images/child-images.module';
 
@@ -13,7 +14,7 @@ import { ComposeLiveService } from 'src/child-images/compose-live.service';
     ChildImagesModule, // <<-- IMPORTANTE: traz o provider exportado
     CampaignsModule,
   ],
-  providers: [ChildrenService, ComposeLiveService],
+  providers: [ChildrenService, ChildrenUpdateService, ComposeLiveService],
   controllers: [ChildrenController],
 })
 export class ChildrenModule {}

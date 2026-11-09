@@ -19,6 +19,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 
 import { ChildrenService } from './children.service';
+import { ChildrenUpdateService, IncomingRow, UpdateContext, UpdateItem } from './children-update.service';
 import { ChildImagesService } from '../child-images/child-images.service';
 import { CampaignFramesService } from '../campaigns/campaign-frames.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -55,7 +56,30 @@ export class ChildrenController {
     private childImages: ChildImagesService,
     private campaignFrames: CampaignFramesService,
     private composeLive: ComposeLiveService,
+    private updater: ChildrenUpdateService,
   ) {}
+
+  /* —— Atualização de crianças por planilha: prévia (só leitura) e aplicação dos campos escolhidos —— */
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @Post('bulk/update/preview')
+  bulkUpdatePreview(@Body() body: { rows?: IncomingRow[]; context?: UpdateContext }) {
+    if (!Array.isArray(body?.rows) || !body.rows.length) throw new BadRequestException('Nenhuma linha enviada.');
+    if (body.rows.length > 3000) throw new BadRequestException('Envie no máximo 3000 linhas por vez.');
+    return this.updater.preview(body.rows, body.context as UpdateContext);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @Post('bulk/update/apply')
+  bulkUpdateApply(@Body() body: { context?: UpdateContext; updates?: UpdateItem[]; creates?: IncomingRow[] }) {
+    return this.updater.apply({
+      context: body?.context as UpdateContext,
+      updates: Array.isArray(body?.updates) ? body.updates.filter((u) => u && typeof u.childId === 'string' && typeof u.key === 'string') : [],
+      creates: Array.isArray(body?.creates) ? body.creates.filter((c) => c && typeof c.key === 'string') : [],
+    });
+  }
 
   /** Lista paginada; aceita campaignId, scan, skip, take e filtros */
   @Get()
