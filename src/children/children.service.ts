@@ -22,6 +22,8 @@ type ListOpts = {
   photo?: 'with' | 'without';
   minAge?: number;
   maxAge?: number;
+  /** quem tem foto (na campanha, quando informada) vem antes; cada grupo em ordem de nome */
+  photoFirst?: boolean;
 };
 
 /** Valor do filtro de categoria para as crianças sem categoria */
@@ -323,6 +325,7 @@ export class ChildrenService {
       photo,
       minAge,
       maxAge,
+      photoFirst = false,
     }: ListOpts,
     { skip, take }: PageOpts,
   ) {
@@ -367,33 +370,51 @@ export class ChildrenService {
     const total = await this.prisma.child.count({ where });
 
     // —— página —— //
-    const children = await this.prisma.child.findMany({
-      where,
-      orderBy: { name: 'asc' },
-      skip,
-      take,
-      include: {
-        city: true,
-        community: true,
-        school: true,
-        images: true,
-        sponsorships: campaignId
-        ? ({
-            where: { campaignId, status: { in: ChildrenService.BUSY_STATUSES } },
-            select: { id: true, status: true, campaignId: true, createdAt: true },
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-          } as Prisma.Child$sponsorshipsArgs)
-        : ({
-            where: { status: { in: ChildrenService.BUSY_STATUSES } },
-            select: { id: true, status: true, campaignId: true, createdAt: true },
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-          } as Prisma.Child$sponsorshipsArgs),
-        // ID e presente específicos desta campanha, quando houver
-        ...(campaignId ? { campaignData: { where: { campaignId }, ...campaignDataSelect } } : {}),
-      },
-    });
+    const findPage = (w: any, s: number, t: number) =>
+      this.prisma.child.findMany({
+        where: w,
+        orderBy: { name: 'asc' },
+        skip: s,
+        take: t,
+        include: {
+          city: true,
+          community: true,
+          school: true,
+          images: true,
+          sponsorships: campaignId
+          ? ({
+              where: { campaignId, status: { in: ChildrenService.BUSY_STATUSES } },
+              select: { id: true, status: true, campaignId: true, createdAt: true },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            } as Prisma.Child$sponsorshipsArgs)
+          : ({
+              where: { status: { in: ChildrenService.BUSY_STATUSES } },
+              select: { id: true, status: true, campaignId: true, createdAt: true },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            } as Prisma.Child$sponsorshipsArgs),
+          // ID e presente específicos desta campanha, quando houver
+          ...(campaignId ? { campaignData: { where: { campaignId }, ...campaignDataSelect } } : {}),
+        },
+      });
+
+    let children: Awaited<ReturnType<typeof findPage>>;
+    if (photoFirst) {
+      // duas filas em ordem de nome: primeiro as com foto, depois as sem;
+      // uma página pode pegar o fim da primeira e o começo da segunda
+      const imageWhere = campaignId ? { campaignId } : {};
+      const withPhoto = { ...where, AND: [...(where.AND ?? []), { images: { some: imageWhere } }] };
+      const withoutPhoto = { ...where, AND: [...(where.AND ?? []), { images: { none: imageWhere } }] };
+      const withCount = await this.prisma.child.count({ where: withPhoto });
+      const firstTake = Math.max(0, Math.min(take, withCount - skip));
+      const first = firstTake > 0 ? await findPage(withPhoto, skip, firstTake) : [];
+      const restTake = take - first.length;
+      const rest = restTake > 0 ? await findPage(withoutPhoto, Math.max(0, skip - withCount), restTake) : [];
+      children = [...first, ...rest];
+    } else {
+      children = await findPage(where, skip, take);
+    }
 
     // as pastas de fotos no disco usam o ID PRINCIPAL; guarda antes de trocar pelo ID da campanha
     const folderIdByChild = new Map(children.map((c) => [c.id, c.publicId]));

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Delete, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Param, Patch, Post, Delete, Query, Req, UseGuards } from '@nestjs/common';
 import { SponsorshipsService } from './sponsorships.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -6,6 +6,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { UpdateSponsorshipDto } from './dto/sponsorships.dto';
 import { CreateSponsorshipDto } from './dto/create-sponsorship.dto';
 import { TransferSponsorshipsDto } from './dto/transfer.dto';
+import { BulkDeleteSponsorshipsDto } from './dto/bulk-delete.dto';
 
 @Controller('sponsorships')
 @UseGuards(JwtAuthGuard)
@@ -69,6 +70,23 @@ export class SponsorshipsController {
   @Post('transfer')
   async transfer(@Body() dto: TransferSponsorshipsDto) {
     return this.service.transfer(dto.sponsorshipIds, dto.toSponsorId);
+  }
+
+  // POST /sponsorships/bulk-delete -> { sponsorshipIds: string[] }
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN','STAFF')
+  @Post('bulk-delete')
+  bulkDelete(@Body() dto: BulkDeleteSponsorshipsDto) {
+    return this.service.removeMany(dto.sponsorshipIds);
+  }
+
+  // POST /sponsorships/pdf-data -> { sponsorshipIds: string[] } (mesmo formato de /me, com a imagem da campanha)
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN','STAFF')
+  @Post('pdf-data')
+  @HttpCode(200)
+  pdfData(@Body() dto: BulkDeleteSponsorshipsDto) {
+    return this.service.forPdf(dto.sponsorshipIds);
   }
 
   // PATCH genérico — regras no service

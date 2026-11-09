@@ -47,6 +47,7 @@ export class SponsorshipsService {
     publicId: true,
     name: true,
     age: true,
+    birthDate: true, // idade calculada na tela
     photoUrl: true,
     category: true,
     wantedGift: true,
@@ -253,6 +254,30 @@ export class SponsorshipsService {
     });
   }
 
+  /**
+   * Dados para o PDF do admin: os apadrinhamentos escolhidos no mesmo formato de /me, com a
+   * imagem montada para a campanha de cada um. Sem foto nessa campanha vem só o layout
+   * (a foto de campanhas anteriores não é usada).
+   */
+  async forPdf(ids: string[]) {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (!unique.length) return [];
+    const rows = await this.prisma.sponsorship.findMany({
+      where: { id: { in: unique } },
+      select: { ...this.sponsorshipSelectForMe, sponsor: { select: { id: true, name: true } } },
+    });
+    const layouts = await loadCampaignLayouts(this.prisma, rows.map((r) => r.campaign.id));
+    const order = new Map(unique.map((id, i) => [id, i]));
+    return rows
+      .map((r) => {
+        applySponsorshipCampaignData(r);
+        applyCampaignImage(r.child as any, r.campaign.id, layouts.get(r.campaign.id));
+        return r;
+      })
+      // mesma ordem em que a tela pediu
+      .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  }
+
   async listAll(campaignId?: string) {
     const rows = await this.prisma.sponsorship.findMany({
       where: campaignId ? { campaignId } : undefined,
@@ -447,14 +472,24 @@ export class SponsorshipsService {
     const isAdminOrStaff = roles.includes('ADMIN') || roles.includes('STAFF');
     const isSponsor = current.sponsorId === user?.sub;
 
-    if (isSponsor && current.status !== SponsorshipStatus.PENDING) {
-      throw new ForbiddenException('Você só pode excluir apadrinhamentos em estado PENDING.');
-    }
-    if (!isAdminOrStaff && !isSponsor) {
-      throw new ForbiddenException('Você não tem permissão para excluir este apadrinhamento.');
+    // admin/equipe excluem em qualquer status, mesmo quando também são o padrinho do vínculo
+    if (!isAdminOrStaff) {
+      if (!isSponsor) {
+        throw new ForbiddenException('Você não tem permissão para excluir este apadrinhamento.');
+      }
+      if (current.status !== SponsorshipStatus.PENDING) {
+        throw new ForbiddenException('Você só pode excluir apadrinhamentos em estado PENDING.');
+      }
     }
 
     await this.prisma.sponsorship.delete({ where: { id } });
     return { ok: true, deletedId: id };
+  }
+
+  /** Exclusão em lote (admin/equipe), ex.: todos os apadrinhamentos de um padrinho */
+  async removeMany(ids: string[]) {
+    const unique = [...new Set(ids.filter(Boolean))];
+    const { count } = await this.prisma.sponsorship.deleteMany({ where: { id: { in: unique } } });
+    return { ok: true, deleted: count };
   }
 }
