@@ -450,14 +450,14 @@ export class SponsorshipsService {
     const dest = await this.prisma.user.findUnique({ where: { id: toSponsorId } });
     if (!dest) throw new NotFoundException('Padrinho destino não encontrado');
 
-    // atualiza em lote
-    await this.prisma.sponsorship.updateMany({
-      where: { id: { in: sponsorshipIds } },
+    // atualiza em lote (os que já são do destino ficam como estão)
+    const ids = [...new Set((sponsorshipIds ?? []).filter(Boolean))];
+    const { count } = await this.prisma.sponsorship.updateMany({
+      where: { id: { in: ids }, sponsorId: { not: toSponsorId } },
       data: { sponsorId: toSponsorId },
     });
 
-    // opcional: retornar quantos foram alterados
-    return { transferred: sponsorshipIds.length, toSponsorId };
+    return { transferred: count, skipped: ids.length - count, toSponsorId };
   }
 
 
