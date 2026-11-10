@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../common/storage/storage.service';
 
 /* Atualização de crianças por planilha: a prévia diz, linha a linha, se a criança já existe
    (e devolve a ficha atual dela para a tela comparar) ou se seria cadastrada; a aplicação grava
@@ -115,7 +116,51 @@ function snapshot(c: ChildRow) {
 
 @Injectable()
 export class ChildrenUpdateService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private storage: StorageService,
+  ) {}
+
+  /**
+   * Impressão digital (SHA-256) da foto atual de cada criança: a desta campanha e a mais recente
+   * de outra campanha. A tela compara com o arquivo escolhido para não reenviar a mesma foto.
+   */
+  async photoHashes(campaignId: string, childIdsRaw: string[]) {
+    if (!campaignId) throw new BadRequestException('Escolha a campanha.');
+    const childIds = [...new Set((childIdsRaw ?? []).filter((id) => typeof id === 'string'))].slice(0, 1000);
+    const images = await this.prisma.childImage.findMany({
+      where: { childId: { in: childIds } },
+      orderBy: { createdAt: 'desc' },
+      select: { childId: true, campaignId: true, originalKey: true, createdAt: true, campaign: { select: { name: true } } },
+    });
+
+    type Pick = { key: string; createdAt: Date; campaignName: string | null };
+    const latest = new Map<string, { current?: Pick; other?: Pick }>();
+    for (const img of images) {
+      const slot = latest.get(img.childId) ?? {};
+      const pick = { key: img.originalKey, createdAt: img.createdAt, campaignName: img.campaign?.name ?? null };
+      if (img.campaignId === campaignId) slot.current ??= pick;
+      else slot.other ??= pick;
+      latest.set(img.childId, slot);
+    }
+
+    const out: Record<string, { current: { hash: string; createdAt: Date } | null; other: { hash: string; campaignName: string | null } | null }> = {};
+    const entries = [...latest.entries()];
+    // lê do disco em paralelo, de poucos em poucos
+    for (let i = 0; i < entries.length; i += 8) {
+      await Promise.all(entries.slice(i, i + 8).map(async ([childId, slot]) => {
+        const [cur, oth] = await Promise.all([
+          slot.current ? this.storage.hashByKey(slot.current.key) : null,
+          slot.other ? this.storage.hashByKey(slot.other.key) : null,
+        ]);
+        out[childId] = {
+          current: cur && slot.current ? { hash: cur, createdAt: slot.current.createdAt } : null,
+          other: oth && slot.other ? { hash: oth, campaignName: slot.other.campaignName } : null,
+        };
+      }));
+    }
+    return { hashes: out };
+  }
 
   private async checkContext(ctx: UpdateContext) {
     if (!ctx?.campaignId) throw new BadRequestException('Escolha a campanha.');

@@ -72,6 +72,13 @@ export class ChildrenController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'STAFF')
+  @Post('bulk/update/photo-hashes')
+  bulkUpdatePhotoHashes(@Body() body: { campaignId?: string; childIds?: string[] }) {
+    return this.updater.photoHashes(String(body?.campaignId ?? ''), Array.isArray(body?.childIds) ? body.childIds : []);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
   @Post('bulk/update/apply')
   bulkUpdateApply(@Body() body: { context?: UpdateContext; updates?: UpdateItem[]; creates?: IncomingRow[] }) {
     return this.updater.apply({

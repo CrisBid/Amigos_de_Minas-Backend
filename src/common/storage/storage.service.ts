@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { promises as fsp } from 'fs';
 import { join, dirname } from 'path';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import sharp from 'sharp';
 
 @Injectable()
@@ -60,6 +60,23 @@ export class StorageService {
   async readBufferByKey(key: string) {
     const full = this.absPathFromKey(key);
     return fsp.readFile(full);
+  }
+
+  private hashCache = new Map<string, { size: number; mtimeMs: number; hash: string }>();
+
+  /** SHA-256 do arquivo (para saber se uma foto enviada é exatamente a mesma). Guarda em memória enquanto o arquivo não mudar. */
+  async hashByKey(key: string): Promise<string | null> {
+    const full = this.absPathFromKey(key);
+    try {
+      const st = await fsp.stat(full);
+      const hit = this.hashCache.get(key);
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.hash;
+      const hash = createHash('sha256').update(await fsp.readFile(full)).digest('hex');
+      this.hashCache.set(key, { size: st.size, mtimeMs: st.mtimeMs, hash });
+      return hash;
+    } catch {
+      return null;
+    }
   }
 
   async exists(key: string) {
