@@ -7,16 +7,61 @@ import { CreateCommunityDto, UpdateCommunityDto, QueryCommunitiesDto } from './d
 export class CommunitiesService {
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * Cria a comunidade. O nome é único por cidade (o banco recusa repetido): se já existe uma
+   * ativa com esse nome, avisa; se existe uma excluída, ela é reativada em vez de dar erro.
+   */
   async create(dto: CreateCommunityDto) {
-    return this.prisma.community.create({
-      data: {
-        cityId: dto.cityId,
-        name: dto.name,
-        slug: dto.slug,
-        description: dto.description,
-        publicId: dto.publicId ?? null,
-      },
+    const name = String(dto.name ?? '').trim().replace(/\s+/g, ' ');
+    if (!name) throw new BadRequestException('Informe o nome da comunidade.');
+    const city = await this.prisma.city.findUnique({ where: { id: dto.cityId }, select: { id: true, name: true } });
+    if (!city) throw new BadRequestException('Cidade não encontrada.');
+
+    // mesmo nome na cidade, sem diferença de maiúsculas (inclui as excluídas)
+    const same = await this.prisma.community.findFirst({
+      where: { cityId: city.id, name: { equals: name, mode: 'insensitive' } },
+      select: { id: true, name: true, deletedAt: true, publicId: true },
     });
+    if (same && !same.deletedAt) {
+      throw new BadRequestException(`A comunidade "${same.name}" já existe em ${city.name}.`);
+    }
+    if (dto.publicId != null && dto.publicId !== same?.publicId) {
+      const clash = await this.prisma.community.findFirst({
+        where: { publicId: dto.publicId, ...(same ? { id: { not: same.id } } : {}) },
+        select: { name: true },
+      });
+      if (clash) throw new BadRequestException(`O ID público ${dto.publicId} já pertence à comunidade "${clash.name}".`);
+    }
+
+    try {
+      if (same) {
+        return await this.prisma.community.update({
+          where: { id: same.id },
+          data: {
+            name,
+            deletedAt: null,
+            slug: dto.slug ?? undefined,
+            description: dto.description ?? undefined,
+            publicId: dto.publicId ?? undefined,
+          },
+        });
+      }
+      return await this.prisma.community.create({
+        data: {
+          cityId: city.id,
+          name,
+          slug: dto.slug,
+          description: dto.description,
+          publicId: dto.publicId ?? null,
+        },
+      });
+    } catch (e) {
+      // corrida (duas pessoas criando ao mesmo tempo) ou outra regra de unicidade
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new BadRequestException(`Já existe uma comunidade "${name}" em ${city.name} (ou o ID público já está em uso).`);
+      }
+      throw e;
+    }
   }
 
     async findMany(query: QueryCommunitiesDto) {

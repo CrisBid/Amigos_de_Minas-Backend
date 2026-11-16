@@ -20,6 +20,7 @@ import { SponsorsModule } from './sponsors/sponsors.module';
 import { ChildrenExportModule } from './exports/children/export-children.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { SourceCheckModule } from './source-check/source-check.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     ChildrenExportModule,
     DashboardModule,
     NotificationsModule,
+    SourceCheckModule,
   ],
 })
 export class AppModule {}

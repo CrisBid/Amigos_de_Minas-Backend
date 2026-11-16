@@ -104,6 +104,10 @@ model Campaign {
   endDate        DateTime?
   status      CampaignStatus @default(DRAFT)
 
+  // origem dos dados (Google): planilha das crianças e pasta das fotos, para a conferência
+  sourceSheetId        String?
+  sourcePhotosFolderId String?
+
   // retrocompat (se já existe)
   frameKey       String?
   frameUrl       String?

@@ -62,21 +62,37 @@ export class StorageService {
     return fsp.readFile(full);
   }
 
-  private hashCache = new Map<string, { size: number; mtimeMs: number; hash: string }>();
+  private hashCache = new Map<string, { size: number; mtimeMs: number; hash: string; md5: string }>();
 
-  /** SHA-256 do arquivo (para saber se uma foto enviada é exatamente a mesma). Guarda em memória enquanto o arquivo não mudar. */
-  async hashByKey(key: string): Promise<string | null> {
+  /** SHA-256 e MD5 do arquivo, guardados em memória enquanto o arquivo não mudar */
+  private async digests(key: string) {
     const full = this.absPathFromKey(key);
     try {
       const st = await fsp.stat(full);
       const hit = this.hashCache.get(key);
-      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.hash;
-      const hash = createHash('sha256').update(await fsp.readFile(full)).digest('hex');
-      this.hashCache.set(key, { size: st.size, mtimeMs: st.mtimeMs, hash });
-      return hash;
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit;
+      const buf = await fsp.readFile(full);
+      const entry = {
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+        hash: createHash('sha256').update(buf).digest('hex'),
+        md5: createHash('md5').update(buf).digest('hex'),
+      };
+      this.hashCache.set(key, entry);
+      return entry;
     } catch {
       return null;
     }
+  }
+
+  /** SHA-256 do arquivo (para saber se uma foto enviada é exatamente a mesma) */
+  async hashByKey(key: string): Promise<string | null> {
+    return (await this.digests(key))?.hash ?? null;
+  }
+
+  /** MD5 do arquivo: o Google Drive informa o MD5 de cada arquivo, então dá para comparar sem baixar */
+  async md5ByKey(key: string): Promise<string | null> {
+    return (await this.digests(key))?.md5 ?? null;
   }
 
   async exists(key: string) {
