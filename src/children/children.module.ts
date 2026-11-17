@@ -16,5 +16,6 @@ import { ComposeLiveService } from 'src/child-images/compose-live.service';
   ],
   providers: [ChildrenService, ChildrenUpdateService, ComposeLiveService],
   controllers: [ChildrenController],
+  exports: [ChildrenUpdateService],
 })
 export class ChildrenModule {}

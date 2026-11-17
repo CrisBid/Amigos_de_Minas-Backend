@@ -427,6 +427,42 @@ model Sponsorship {
   @@index([collectionPointId])
 }
 
+/**
+ * Histórico de alterações (auditoria). Toda gravação feita no painel entra aqui: as
+ * automáticas guardam quem, quando, a rota e os dados enviados; as da conferência com a
+ * origem guardam também a ficha antes e depois (o que permite desfazer).
+ * Sem chaves estrangeiras de propósito: o registro sobrevive mesmo se o item for apagado.
+ */
+model AuditLog {
+  id         String    @id @default(cuid())
+  createdAt  DateTime  @default(now())
+
+  actorId    String?
+  actorName  String?
+  actorEmail String?
+
+  action     String    // ex.: child.create, child.remove, "PATCH /children/:id"
+  entity     String?   // Child, Sponsorship, Community, children, sponsorships…
+  entityId   String?
+  campaignId String?
+  batchId    String?   // ações feitas juntas (um "aplicar" da conferência)
+  source     String?   // source-check | api
+
+  summary    String
+  before     Json?
+  after      Json?
+  meta       Json?
+
+  revertedAt DateTime?
+  revertedBy String?   // id do registro que desfez este
+
+  @@index([createdAt])
+  @@index([entity, entityId])
+  @@index([batchId])
+  @@index([campaignId, createdAt])
+  @@index([actorId, createdAt])
+}
+
 enum ChildImageStatus {
   ORIGINAL_UPLOADED // original recebido e salvo
   PROCESSED // gerou .webp (sem layout)

@@ -21,6 +21,7 @@ import { ChildrenExportModule } from './exports/children/export-children.module'
 import { DashboardModule } from './dashboard/dashboard.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SourceCheckModule } from './source-check/source-check.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -33,8 +34,9 @@ import { SourceCheckModule } from './source-check/source-check.module';
         maxAge: '30d',
       },
     }),
-    PrismaModule, 
-    AuthModule, 
+    PrismaModule,
+    AuditModule,
+    AuthModule,
     UsersModule, 
     ChildrenModule, 
     SponsorshipsModule, 

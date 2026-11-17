@@ -102,6 +102,26 @@ export class GoogleClient {
     return j;
   }
 
+  /** Baixa um arquivo do Drive (foto), até 25 MB */
+  async download(fileId: string): Promise<{ buffer: Buffer; mime: string; name: string; md5: string | null }> {
+    const meta = await this.get(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,md5Checksum&supportsAllDrives=true`,
+      'à foto no Drive',
+    );
+    if (meta.size && Number(meta.size) > 25 * 1024 * 1024) throw new ServiceUnavailableException(`A foto "${meta.name}" tem mais de 25 MB.`);
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${await this.accessToken()}` } },
+    );
+    if (!res.ok) throw new ServiceUnavailableException(`Não foi possível baixar a foto "${meta.name}" do Drive (${res.status}).`);
+    return {
+      buffer: Buffer.from(await res.arrayBuffer()),
+      mime: String(meta.mimeType ?? res.headers.get('content-type') ?? 'image/jpeg'),
+      name: meta.name,
+      md5: meta.md5Checksum ?? null,
+    };
+  }
+
   /** Todas as abas da planilha, com o texto de cada célula como aparece na tela */
   async readSpreadsheet(spreadsheetId: string) {
     const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
