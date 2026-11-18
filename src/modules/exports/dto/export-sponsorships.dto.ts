@@ -76,6 +76,11 @@ export class ExportSponsorshipsQueryDto {
   @IsOptional()
   sponsorList?: string;
 
+  /** 0 = sem o resumo dos presentes por comunidade */
+  @IsString()
+  @IsOptional()
+  giftSummary?: string;
+
   /** ordem dentro do grupo: name (padrão) | id */
   @IsString()
   @IsOptional()

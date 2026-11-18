@@ -165,6 +165,7 @@ export class ExportSponsorshipsService {
       groupBy: this.groupBy(query),
       layout: query.layout === 'single' ? 'single' : 'tabs',
       sponsorList: query.sponsorList !== '0',
+      giftSummary: query.giftSummary !== '0',
       sortBy: query.sortBy === 'id' ? 'id' : 'name',
     });
   }

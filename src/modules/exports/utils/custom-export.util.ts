@@ -136,6 +136,54 @@ export function sponsorContacts(rows: ExportRow[]): SponsorContact[] {
     .sort((a, b) => cmp(a.name, b.name));
 }
 
+export type SponsorInGroup = { id: string; name: string; email: string | null; phone: string | null; children: number; ids: number[] };
+
+/**
+ * Padrinhos separados por grupo: comunidade (padrão) ou, se a lista estiver separada por
+ * cidade/escola/ponto de coleta, o mesmo grupo dela. Quem apadrinha em mais de uma comunidade
+ * aparece em cada uma, com as crianças daquela comunidade.
+ */
+export function sponsorGroups(rows: ExportRow[], by: GroupBy, sortBy: SortBy = 'name') {
+  const sponsorBy: GroupBy = by === 'city' || by === 'school' || by === 'collectionPoint' ? by : 'community';
+  return groupRows(rows.filter((r) => r.sponsorId), sponsorBy, sortBy).map((g) => {
+    const map = new Map<string, SponsorInGroup>();
+    for (const r of g.rows) {
+      const s = map.get(r.sponsorId!) ?? { id: r.sponsorId!, name: r.sponsorName ?? '', email: r.sponsorEmail, phone: r.sponsorPhone, children: 0, ids: [] };
+      s.children++;
+      if (r.publicId != null) s.ids.push(r.publicId);
+      map.set(r.sponsorId!, s);
+    }
+    const sponsors = [...map.values()]
+      .map((s) => ({ ...s, ids: [...s.ids].sort((a, b) => a - b) }))
+      .sort((a, b) => cmp(a.name, b.name));
+    return { label: g.label, sponsors };
+  });
+}
+
+export type GiftCount = { gift: string; count: number; ids: number[] };
+
+/**
+ * Resumo dos presentes: em cada comunidade (ou no mesmo grupo da lista, se for cidade/escola/
+ * ponto de coleta), quantos de cada presente — o mesmo presente escrito igual é somado,
+ * sem diferença de maiúsculas e espaços. Ordem: mais pedidos primeiro.
+ */
+export function giftSummary(rows: ExportRow[], by: GroupBy) {
+  const giftBy: GroupBy = by === 'city' || by === 'school' || by === 'collectionPoint' ? by : 'community';
+  return groupRows(rows, giftBy, 'id').map((g) => {
+    const map = new Map<string, GiftCount>();
+    for (const r of g.rows) {
+      const text = (r.gift ?? '').trim().replace(/\s+/g, ' ');
+      const key = text.toUpperCase() || '~';
+      const item = map.get(key) ?? { gift: text ? text.toUpperCase() : '(sem presente informado)', count: 0, ids: [] };
+      item.count++;
+      if (r.publicId != null) item.ids.push(r.publicId);
+      map.set(key, item);
+    }
+    const gifts = [...map.values()].sort((a, b) => b.count - a.count || cmp(a.gift, b.gift));
+    return { label: g.label, total: g.rows.length, gifts };
+  });
+}
+
 /** Nome de aba válido no Excel (31 letras, sem : \ / ? * [ ]) e sem repetir */
 function sheetName(label: string, used: Set<string>) {
   const base = label.replace(/[:\\/?*[\]]/g, '-').trim().slice(0, 31) || 'Aba';
@@ -171,6 +219,7 @@ export async function buildCustomExcel(opts: {
   groupBy: GroupBy;
   layout: 'tabs' | 'single';
   sponsorList: boolean;
+  giftSummary?: boolean;
   sortBy?: SortBy;
   title?: string;
 }) {
@@ -191,6 +240,25 @@ export async function buildCustomExcel(opts: {
       if (money >= 0) row.getCell(money + 1).numFmt = '"R$" #,##0.00';
     }
   };
+
+  if (opts.giftSummary) {
+    const ws = wb.addWorksheet(sheetName('Resumo dos presentes', used), { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = [
+      { header: 'Presente', key: 'gift', width: 44 },
+      { header: 'Quantidade', key: 'count', width: 12 },
+      { header: 'IDs das crianças', key: 'ids', width: 50 },
+    ];
+    styleHeader(ws.getRow(1));
+    for (const g of giftSummary(opts.rows, opts.groupBy)) {
+      const t = ws.addRow([`${g.label} — ${g.total} criança(s), ${g.gifts.length} presente(s) diferente(s)`]);
+      ws.mergeCells(t.number, 1, t.number, 3);
+      t.getCell(1).font = { bold: true, color: { argb: 'FF1F5F47' } };
+      t.getCell(1).fill = GROUP_FILL;
+      for (const it of g.gifts) {
+        ws.addRow({ gift: it.gift, count: it.count, ids: it.ids.join(', ') }).alignment = { vertical: 'top', wrapText: true };
+      }
+    }
+  }
 
   if (opts.layout === 'tabs' && opts.groupBy !== 'none') {
     for (const g of groups) {
@@ -222,17 +290,19 @@ export async function buildCustomExcel(opts: {
       { header: 'E-mail', key: 'email', width: 34 },
       { header: 'Telefone', key: 'phone', width: 18 },
       { header: 'Crianças', key: 'children', width: 10 },
-      { header: 'Comunidades', key: 'communities', width: 40 },
-      { header: 'Ponto de coleta', key: 'points', width: 30 },
+      { header: 'IDs das crianças', key: 'ids', width: 40 },
     ];
     styleHeader(ws.getRow(1));
-    for (const s of sponsorContacts(opts.rows)) {
-      ws.addRow({
-        name: s.name, email: s.email ?? '', phone: s.phone ?? '', children: s.children,
-        communities: s.communities.join('; '), points: s.collectionPoints.join('; '),
-      }).alignment = { vertical: 'top', wrapText: true };
+    for (const g of sponsorGroups(opts.rows, opts.groupBy, opts.sortBy ?? 'name')) {
+      const t = ws.addRow([`${g.label} — ${g.sponsors.length} padrinho(s)`]);
+      ws.mergeCells(t.number, 1, t.number, 5);
+      t.getCell(1).font = { bold: true, color: { argb: 'FF1F5F47' } };
+      t.getCell(1).fill = GROUP_FILL;
+      for (const s of g.sponsors) {
+        ws.addRow({ name: s.name, email: s.email ?? '', phone: s.phone ?? '', children: s.children, ids: s.ids.join(', ') })
+          .alignment = { vertical: 'top', wrapText: true };
+      }
     }
-    ws.autoFilter = { from: 'A1', to: 'F1' };
   }
 
   if (!wb.worksheets.length) wb.addWorksheet('Vazio').addRow(['Nenhum apadrinhamento com estes filtros.']);
