@@ -2,7 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExportLevel, ExportSponsorshipsQueryDto } from './dto/export-sponsorships.dto';
-import { buildExcelBuffer, ChildRow } from './utils/excel.util';
+import { buildCustomExcel, DEFAULT_FIELDS, EXPORT_FIELDS, ExportRow, GroupBy, sponsorContacts } from './utils/custom-export.util';
 // Opcional: se quiser tipar os filtros com os enums:
 import { SponsorshipStatus, SponsorshipMethod } from '@prisma/client';
 import { applySponsorshipCampaignData, campaignDataSelect } from '../../common/child-campaign-data';
@@ -47,17 +47,16 @@ const STATUS_PT: Record<SponsorshipStatus, string> = {
 export class ExportSponsorshipsService {
   constructor(private prisma: PrismaService) {}
 
-  async fetchRows(query: ExportSponsorshipsQueryDto): Promise<ChildRow[]> {
+  async fetchRows(query: ExportSponsorshipsQueryDto): Promise<ExportRow[]> {
     const statusList = parseEnumList(query.status, Object.values(SponsorshipStatus));
     const methodList = parseEnumList(query.method, Object.values(SponsorshipMethod));
 
-    // Where base
     const where: any = {};
     if (statusList) where.status = { in: statusList };
     if (methodList) where.method = { in: methodList };
     if (query.campaignId) where.campaignId = query.campaignId;
 
-    // Níveis/filtros — agora direto da CRIANÇA (cityId/communityId)
+    // recorte: cidade/comunidade direto da criança, padrinho ou lista de apadrinhamentos
     switch (query.level) {
       case ExportLevel.CITY:
         if (query.cityId) where.child = { cityId: query.cityId };
@@ -70,13 +69,11 @@ export class ExportSponsorshipsService {
         break;
       case ExportLevel.SELECTION:
         if (query.ids) {
-          const ids = query.ids.split(',').map(s => s.trim()).filter(Boolean);
+          const ids = query.ids.split(',').map((s) => s.trim()).filter(Boolean);
           if (ids.length) where.id = { in: ids };
         }
         break;
-      case ExportLevel.GENERAL:
       default:
-        // sem filtro adicional
         break;
     }
 
@@ -88,109 +85,87 @@ export class ExportSponsorshipsService {
         campaignId: true,
         status: true,
         method: true,
-        startDate: true,
-        endDate: true,
         createdAt: true,
-        pixTxid: true,
         donationAmount: true,
-
-        // Pega só o necessário do padrinho (evita dados sensíveis)
-        sponsor: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            profile: { select: { phone: true } },
-            // nunca inclua passwordHash
-          },
-        },
-
-        // Cidade/comunidade direto da criança
+        // só o necessário do padrinho (nunca a senha)
+        sponsor: { select: { id: true, name: true, email: true, phone: true, profile: { select: { phone: true } } } },
         child: {
           select: {
             id: true,
             publicId: true,
             name: true,
             birthDate: true,
-            age: true, // se você preenche isso no banco; se não, será null e caímos no calcAge
-            wantedGift: true, // no seu schema é wantedGift; ajuste se seu DTO usa outro nome
+            age: true,
+            wantedGift: true,
             motherName: true,
-            cityName: true, // texto legado, útil como fallback
-            city: { select: { id: true, publicId: true, name: true } },
-            community: { select: { id: true, publicId: true, name: true } },
-            school: { select: { id: true, publicId: true, name: true } }, // opcional
-            campaignData: campaignDataSelect, // ID e presente por campanha
+            cityName: true,
+            city: { select: { name: true } },
+            community: { select: { name: true } },
+            school: { select: { name: true } },
+            campaignData: campaignDataSelect, // ID e presente desta campanha
           },
         },
-
-        collectionPoint: {
-          select: { id: true, name: true, cityName: true, state: true },
-        },
+        collectionPoint: { select: { name: true, cityName: true } },
       },
     });
 
-    // Mapeia linhas
-    const rows: ChildRow[] = sponsorships.map(applySponsorshipCampaignData).map(sp => {
+    return sponsorships.map(applySponsorshipCampaignData).map((sp): ExportRow => {
       const child = sp.child;
       const birthDate: Date | null = child?.birthDate ?? null;
-      const age = child?.age ?? calcAge(birthDate);
-
-      // Contato do padrinho: priorize profile.phone -> sponsor.phone -> email
-      const contact =
-        child?.id && sp.sponsor?.profile?.phone
-          ? sp.sponsor.profile.phone
-          : sp.sponsor?.phone || sp.sponsor?.email || null;
-
-      // PIX: no schema há pixTxid (não pixKey)
-      const pix = sp.pixTxid ?? null;
-
-      // Cidade/comunidade/escola direto da criança
-      const cityName = child?.city?.name ?? child?.cityName ?? null;
-      const communityName = child?.community?.name ?? null;
-      const schoolName = child?.school?.name ?? null;
-
       return {
+        sponsorshipId: sp.id,
         publicId: child?.publicId ?? null,
-        childName: child?.name ?? null,
+        childName: child?.name ?? '',
         birthDate: birthDate ? birthDate.toISOString().slice(0, 10) : null,
-        age,
+        age: calcAge(birthDate) ?? child?.age ?? null,
         gift: child?.wantedGift ?? null,
         mother: child?.motherName ?? null,
-
+        city: child?.city?.name ?? child?.cityName ?? null,
+        community: child?.community?.name ?? null,
+        school: child?.school?.name ?? null,
+        sponsorId: sp.sponsor?.id ?? null,
         sponsorName: sp.sponsor?.name ?? null,
-        contact,
+        sponsorEmail: sp.sponsor?.email ?? null,
+        sponsorPhone: sp.sponsor?.profile?.phone || sp.sponsor?.phone || null,
         method: sp.method ?? null,
-        pix,
-
-        // NOVO (opcional):
+        donationAmount: sp.donationAmount != null ? Number(sp.donationAmount) : null,
         status: sp.status ?? null,
         statusLabel: sp.status ? STATUS_PT[sp.status] : null,
-
-        collectionPoint: sp.collectionPoint?.name ?? null,
-
-        city: cityName,
-        community: communityName,
-        school: schoolName,
-
-        _cityKey: cityName || 'Sem cidade',
-        _communityKey: communityName || 'Sem comunidade',
-        _schoolKey: schoolName || 'Sem escola',
-        _sponsorKey: sp.sponsor?.name || 'Sem padrinho',
-      } as ChildRow;
+        collectionPoint: sp.collectionPoint?.name
+          ? `${sp.collectionPoint.name}${sp.collectionPoint.cityName ? ` (${sp.collectionPoint.cityName})` : ''}`
+          : null,
+        createdAt: sp.createdAt ? sp.createdAt.toISOString() : null,
+      };
     });
+  }
 
-    return rows;
+  /** Colunas pedidas (na ordem pedida); sem nenhuma válida, as padrão */
+  private fields(query: ExportSponsorshipsQueryDto) {
+    const valid = new Set(EXPORT_FIELDS.map((f) => f.key));
+    const list = (query.fields ?? '').split(',').map((s) => s.trim()).filter((k) => valid.has(k));
+    return list.length ? [...new Set(list)] : DEFAULT_FIELDS;
+  }
+
+  private groupBy(query: ExportSponsorshipsQueryDto): GroupBy {
+    const ok: GroupBy[] = ['community', 'city', 'school', 'sponsor', 'collectionPoint', 'none'];
+    return ok.includes(query.groupBy as GroupBy) ? (query.groupBy as GroupBy) : 'community';
+  }
+
+  /** Linhas em JSON (prévia e PDF da tela), com a lista de padrinhos */
+  async rows(query: ExportSponsorshipsQueryDto) {
+    const rows = await this.fetchRows(query);
+    return { rows, sponsors: sponsorContacts(rows), fields: this.fields(query), available: EXPORT_FIELDS };
   }
 
   async generateExcel(query: ExportSponsorshipsQueryDto) {
     const rows = await this.fetchRows(query);
-
-    // Decide a estratégia de abas com base no level
-    const levelForExcel: 'general' | 'city' | 'community' | 'sponsor' | 'selection' =
-      (query.level as any) || 'general';
-
-    const buffer = await buildExcelBuffer(rows, levelForExcel);
-    return buffer;
+    return buildCustomExcel({
+      rows,
+      fields: this.fields(query),
+      groupBy: this.groupBy(query),
+      layout: query.layout === 'single' ? 'single' : 'tabs',
+      sponsorList: query.sponsorList !== '0',
+      sortBy: query.sortBy === 'id' ? 'id' : 'name',
+    });
   }
 }

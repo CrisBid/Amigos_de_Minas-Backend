@@ -1,9 +1,14 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ChildrenExportService } from './export-children.service';
 import { ChildrenExportQueryDto } from './dto/query.dto';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
 
-// aplique seus guards/roles se necessário (ADMIN/STAFF)
+// dados das crianças (nome da mãe, nascimento): só a equipe acessa
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('ADMIN', 'STAFF')
 @Controller('admin/children/export')
 export class ChildrenExportController {
   constructor(private readonly service: ChildrenExportService) {}

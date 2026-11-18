@@ -55,4 +55,29 @@ export class ExportSponsorshipsQueryDto {
   @IsString()
   @IsOptional()
   method?: string;
+
+  /** colunas, na ordem: ?fields=publicId,childName,age,place,gift,sponsorName */
+  @IsString()
+  @IsOptional()
+  fields?: string;
+
+  /** agrupamento: community (padrão) | city | school | sponsor | collectionPoint | none */
+  @IsString()
+  @IsOptional()
+  groupBy?: string;
+
+  /** Excel: tabs (uma aba por grupo, padrão) | single (uma aba com títulos de grupo) */
+  @IsString()
+  @IsOptional()
+  layout?: string;
+
+  /** 0 = sem a aba "Padrinhos" no final */
+  @IsString()
+  @IsOptional()
+  sponsorList?: string;
+
+  /** ordem dentro do grupo: name (padrão) | id */
+  @IsString()
+  @IsOptional()
+  sortBy?: string;
 }
