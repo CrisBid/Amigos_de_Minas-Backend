@@ -35,6 +35,31 @@ export class SourceCheckController {
     return this.service.photos(campaignId);
   }
 
+  /** Comunidades do site (inclusive excluídas) */
+  @Get('communities')
+  communities() {
+    return this.service.communities();
+  }
+
+  /** Cadastra comunidades e escolas da planilha que faltam no site (cada uma vai para o histórico) */
+  @AuditSkip()
+  @Post('register')
+  register(
+    @Body() body: { campaignId?: string; batchId?: string; communities?: { cityId: string; name: string }[]; schools?: { cityId: string; name: string; communityNames?: string[] }[] },
+    @Req() req: any,
+  ) {
+    return this.sync.register(String(body?.campaignId ?? ''), String(body?.batchId ?? ''), {
+      communities: Array.isArray(body?.communities) ? body.communities : [],
+      schools: Array.isArray(body?.schools) ? body.schools : [],
+    }, req.user);
+  }
+
+  /** Escolas do site (para ligar às escolas dos cabeçalhos da planilha) */
+  @Get('schools')
+  schools() {
+    return this.service.schools();
+  }
+
   /** MD5 das fotos do site, para comparar com o do Drive */
   @Post('site-md5')
   siteMd5(@Body() body: { campaignId?: string; childIds?: string[] }) {

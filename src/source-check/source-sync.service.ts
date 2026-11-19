@@ -27,14 +27,19 @@ export type SheetRow = {
 
 export type SponsorshipDecision = { id: string; decision: 'cancel' | 'replace'; replacementChildId?: string | null };
 
+/** Escola escolhida na tela (ligação "escola da planilha → escola do site") ou uma nova a criar */
+export type SchoolChoice = { schoolId?: string | null; newName?: string | null };
+
 export type SyncItem =
-  | { op: 'create'; key: string; cityId: string; community?: string | null; row: SheetRow; photoFileId?: string | null; useChildId?: string | null; forceNew?: boolean }
-  | { op: 'update'; key: string; childId: string; cityId?: string | null; fields: { name?: string; gift?: string; birthDate?: string; community?: string } }
+  | { op: 'create'; key: string; cityId: string; community?: string | null; school?: SchoolChoice | null; row: SheetRow; photoFileId?: string | null; useChildId?: string | null; forceNew?: boolean }
+  | { op: 'update'; key: string; childId: string; cityId?: string | null; fields: { name?: string; gift?: string; birthDate?: string; community?: string; school?: SchoolChoice } }
   | { op: 'renumber'; key: string; childId: string; publicId: number }
   | { op: 'photo'; key: string; childId: string; photoFileId: string }
   | { op: 'remove'; key: string; childId: string; sponsorship?: SponsorshipDecision | null };
 
 type CommunityPlan = { action: 'none' | 'existing' | 'reactivate' | 'create'; id?: string; name: string; similarTo?: string };
+/** linkCommunity: a escola ainda não atende a comunidade da criança e passa a atender */
+type SchoolPlan = { action: 'none' | 'existing' | 'create'; id?: string; name: string; linkCommunity?: boolean };
 
 type ChildBrief = { id: string; publicId: number; name: string; community: string | null; birthDate: string | null; age: number | null; inCampaign: boolean };
 
@@ -50,6 +55,7 @@ export type PlanResult = {
   match?: { kind: 'new' } | { kind: 'reuse'; child: ChildBrief; reason: string };
   candidates?: ChildBrief[];
   community?: CommunityPlan;
+  school?: SchoolPlan;
   /** remove: apadrinhamentos desta criança nesta campanha */
   sponsorships?: SponsorshipDetail[];
   needsDecision?: boolean;
@@ -245,6 +251,77 @@ export class SourceSyncService {
     return null;
   }
 
+  /** Escola escolhida → a do site (tem de ser da cidade) ou uma nova; diz se precisa ligar à comunidade */
+  private async planSchool(cityId: string, choice: SchoolChoice | null | undefined, community: { id?: string | null; action?: string } | null): Promise<SchoolPlan> {
+    const id = choice?.schoolId?.trim();
+    const newName = String(choice?.newName ?? '').trim().replace(/\s+/g, ' ');
+    if (!id && !newName) return { action: 'none', name: '' };
+    const communityId = community?.id ?? null;
+    const willCreateCommunity = community?.action === 'create';
+    if (id) {
+      const sc = await this.prisma.school.findFirst({
+        where: { id, deletedAt: null },
+        select: { id: true, name: true, cityId: true, communities: { select: { communityId: true } } },
+      });
+      if (!sc) throw new Error('A escola escolhida não existe mais.');
+      if (sc.cityId !== cityId) throw new Error(`A escola "${sc.name}" não é da cidade da criança.`);
+      const linked = !!communityId && sc.communities.some((c) => c.communityId === communityId);
+      return { action: 'existing', id: sc.id, name: sc.name, linkCommunity: willCreateCommunity || (!!communityId && !linked) };
+    }
+    // nova: se já existe uma com o mesmo nome na cidade, usa ela
+    const same = (await this.prisma.school.findMany({
+      where: { cityId, deletedAt: null },
+      select: { id: true, name: true, communities: { select: { communityId: true } } },
+    })).find((x) => normalize(x.name) === normalize(newName));
+    if (same) {
+      const linked = !!communityId && same.communities.some((c) => c.communityId === communityId);
+      return { action: 'existing', id: same.id, name: same.name, linkCommunity: willCreateCommunity || (!!communityId && !linked) };
+    }
+    return { action: 'create', name: newName, linkCommunity: true };
+  }
+
+  private schoolEffects(p: SchoolPlan, communityName: string | null) {
+    const out: string[] = [];
+    if (p.action === 'create') out.push(`Cria a escola "${p.name}"${communityName ? ` atendendo a comunidade ${communityName}` : ''}`);
+    else if (p.linkCommunity && communityName) out.push(`Passa a escola "${p.name}" a atender também a comunidade ${communityName}`);
+    return out;
+  }
+
+  /** Cria a escola (ou liga à comunidade) e devolve o id; registra no histórico */
+  private async ensureSchool(cityId: string, plan: SchoolPlan, communityId: string | null, actor: AuditActor, ctx: { campaignId: string; batchId: string }): Promise<string | null> {
+    if (plan.action === 'none') return null;
+    if (plan.action === 'create') {
+      // outro item do mesmo lote pode ter criado
+      const again = await this.planSchool(cityId, { newName: plan.name }, communityId ? { id: communityId } : null);
+      if (again.action === 'existing') return this.ensureSchool(cityId, again, communityId, actor, ctx);
+      const city = await this.prisma.city.findUnique({ where: { id: cityId }, select: { name: true } });
+      const created = await this.prisma.school.create({
+        data: { cityId, name: plan.name, communityId, ...(communityId ? { communities: { create: { communityId } } } : {}) },
+        select: { id: true, name: true },
+      });
+      await this.audit.record(actor, {
+        action: 'school.create', entity: 'School', entityId: created.id, source: SOURCE, ...ctx,
+        summary: `Criou a escola "${created.name}" em ${city?.name ?? 'cidade'} (veio da planilha)`,
+        after: { ...created, communityId },
+      });
+      return created.id;
+    }
+    const id = plan.id ?? null;
+    if (id && communityId && plan.linkCommunity) {
+      const res = await this.prisma.schoolCommunity.createMany({ data: [{ schoolId: id, communityId }], skipDuplicates: true });
+      await this.prisma.school.updateMany({ where: { id, communityId: null }, data: { communityId } });
+      if (res.count) {
+        const cm = await this.prisma.community.findUnique({ where: { id: communityId }, select: { name: true } });
+        await this.audit.record(actor, {
+          action: 'school.link', entity: 'School', entityId: id, source: SOURCE, ...ctx,
+          summary: `A escola "${plan.name}" passou a atender a comunidade ${cm?.name ?? ''} (veio da planilha)`,
+          after: { schoolId: id, communityId },
+        });
+      }
+    }
+    return id;
+  }
+
   private async assertPidFree(campaignId: string, pid: number, childId?: string) {
     const taken = await this.prisma.childCampaignData.findFirst({
       where: { campaignId, publicId: pid, ...(childId ? { childId: { not: childId } } : {}) },
@@ -254,6 +331,71 @@ export class SourceSyncService {
   }
 
   /* ————————————————————— conferir (plan) ————————————————————— */
+
+  /**
+   * Cadastra comunidades e escolas que estão na planilha e faltam no site (escolhidas na tela).
+   * Comunidade com o mesmo nome (sem acento/maiúscula) é reaproveitada; excluída é reativada.
+   * Escola é ligada às comunidades que atende (inclusive as criadas nesta mesma chamada).
+   */
+  async register(
+    campaignId: string,
+    batchId: string,
+    body: {
+      communities?: { cityId: string; name: string }[];
+      schools?: { cityId: string; name: string; communityNames?: string[] }[];
+    },
+    actor: AuditActor,
+  ) {
+    await this.campaign(campaignId);
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(batchId ?? '')) throw new BadRequestException('Lote inválido.');
+    this.communityCache.clear();
+    const ctx = { campaignId, batchId };
+    const cityOk = async (cityId: string) => !!cityId && !!(await this.prisma.city.findUnique({ where: { id: cityId }, select: { id: true } }));
+
+    const communities: { cityId: string; name: string; ok: boolean; id?: string; status?: string; message?: string }[] = [];
+    for (const c of (body.communities ?? []).slice(0, 300)) {
+      const name = String(c?.name ?? '').trim().replace(/\s+/g, ' ');
+      try {
+        if (!name) throw new Error('Nome vazio.');
+        if (!(await cityOk(c.cityId))) throw new Error('Cidade não encontrada.');
+        const plan = await this.planCommunity(c.cityId, name);
+        const id = await this.ensureCommunity(c.cityId, plan, actor, ctx);
+        communities.push({ cityId: c.cityId, name: plan.name, ok: true, id: id ?? undefined, status: plan.action === 'existing' ? 'já existia' : plan.action === 'reactivate' ? 'reativada' : 'criada' });
+      } catch (e: any) {
+        communities.push({ cityId: c.cityId, name, ok: false, message: e?.message ?? 'Falha.' });
+      }
+    }
+
+    const schools: { cityId: string; name: string; ok: boolean; id?: string; status?: string; message?: string }[] = [];
+    for (const s of (body.schools ?? []).slice(0, 300)) {
+      const name = String(s?.name ?? '').trim().replace(/\s+/g, ' ');
+      try {
+        if (!name) throw new Error('Nome vazio.');
+        if (!(await cityOk(s.cityId))) throw new Error('Cidade não encontrada.');
+        // comunidades atendidas (precisam existir; as que faltarem ficam de fora, com aviso)
+        const ids: string[] = [];
+        const missing: string[] = [];
+        for (const cn of s.communityNames ?? []) {
+          const p = await this.planCommunity(s.cityId, cn);
+          if (p.action === 'existing' && p.id) ids.push(p.id);
+          else if (p.action !== 'none') missing.push(cn);
+        }
+        const plan = await this.planSchool(s.cityId, { newName: name }, ids[0] ? { id: ids[0] } : null);
+        const id = await this.ensureSchool(s.cityId, plan, ids[0] ?? null, actor, ctx);
+        for (const cid of ids.slice(1)) {
+          await this.ensureSchool(s.cityId, { action: 'existing', id: id!, name: plan.name, linkCommunity: true }, cid, actor, ctx);
+        }
+        schools.push({
+          cityId: s.cityId, name: plan.name, ok: true, id: id ?? undefined,
+          status: plan.action === 'existing' ? 'já existia (ligada às comunidades)' : 'criada',
+          message: missing.length ? `Comunidade(s) não cadastrada(s), sem ligação: ${missing.join(', ')}` : undefined,
+        });
+      } catch (e: any) {
+        schools.push({ cityId: s.cityId, name, ok: false, message: e?.message ?? 'Falha.' });
+      }
+    }
+    return { batchId, communities, schools };
+  }
 
   async plan(campaignId: string, itemsRaw: SyncItem[]) {
     await this.campaign(campaignId);
@@ -306,6 +448,8 @@ export class SourceSyncService {
     const ce = this.communityEffect(out.community);
     if (ce) out.effects.push(ce);
     if (out.community.similarTo) out.warnings.push(`Comunidade "${out.community.similarTo}" da planilha ligada a "${out.community.name}" do site (nome parecido).`);
+    out.school = await this.planSchool(city.id, item.school, out.community);
+    out.effects.push(...this.schoolEffects(out.school, out.community.name || null));
 
     // parecidas na cidade (para escolher usar um cadastro existente)
     const select = {
@@ -360,6 +504,7 @@ export class SourceSyncService {
         ? `Coloca na campanha o cadastro de ${out.match.child.name} (${out.match.reason}) com o ID ${pid} e os dados da planilha`
         : `Cadastra ${name} com o ID ${pid} em ${city.name}${out.community.name ? ` / ${out.community.name}` : ''}`,
     );
+    out.effects.splice(1, 0, out.school.action === 'none' ? 'Sem escola definida (fica sem escola)' : `Escola: ${out.school.name}`);
     out.effects.push(item.photoFileId ? 'Traz a foto do Drive' : 'Sem foto no Drive (fica sem foto)');
     return out;
   }
@@ -386,8 +531,24 @@ export class SourceSyncService {
       }
       if (out.community.similarTo) out.warnings.push(`Comunidade "${out.community.similarTo}" ligada a "${out.community.name}" do site (nome parecido).`);
     }
+    if (f.school && (f.school.schoolId || f.school.newName)) {
+      const cityId = s.child.cityId ?? item.cityId;
+      if (!cityId) throw new Error('A criança está sem cidade no site.');
+      const comm = out.community && out.community.action !== 'none'
+        ? out.community
+        : { id: s.child.communityId, action: 'existing', name: s.child.communityName ?? '' };
+      out.school = await this.planSchool(cityId, f.school, comm);
+      if (out.school.id !== s.child.schoolId || out.school.action === 'create') {
+        out.effects.push(`Escola: ${s.child.schoolId ? await this.schoolName(s.child.schoolId) : 'vazio'} → ${out.school.name}`);
+      }
+      out.effects.push(...this.schoolEffects(out.school, comm.name || null));
+    }
     if (!out.effects.length) out.warnings.push('Nada a mudar: o site já está igual.');
     return out;
+  }
+
+  private async schoolName(id: string) {
+    return (await this.prisma.school.findUnique({ where: { id }, select: { name: true } }))?.name ?? 'escola';
   }
 
   private async planRenumber(campaignId: string, item: Extract<SyncItem, { op: 'renumber' }>, out: PlanResult): Promise<PlanResult> {
@@ -552,7 +713,8 @@ export class SourceSyncService {
       const r = item.row;
       const pid = parseInt(String(r.publicId), 10);
       const communityId = await this.ensureCommunity(item.cityId, plan.community!, actor, ctx);
-      const context = { campaignId, cityId: item.cityId, communityId };
+      const schoolId = plan.school ? await this.ensureSchool(item.cityId, plan.school, communityId, actor, ctx) : null;
+      const context = { campaignId, cityId: item.cityId, communityId, schoolId };
       let childId: string;
       let before: Snapshot | null = null;
       if (plan.match?.kind === 'reuse') {
@@ -599,9 +761,13 @@ export class SourceSyncService {
       const f = item.fields ?? {};
       const communityId = plan.community && plan.community.action !== 'none' ? await this.ensureCommunity(cityId, plan.community, actor, ctx) : null;
       const moveCommunity = !!communityId && communityId !== before.child.communityId;
+      const schoolId = plan.school && plan.school.action !== 'none'
+        ? await this.ensureSchool(cityId, plan.school, communityId ?? before.child.communityId, actor, ctx)
+        : null;
+      const changeSchool = !!schoolId && schoolId !== before.child.schoolId;
       fail(await this.updater.apply({
-        context: { campaignId, cityId, communityId },
-        updates: [{ key: item.key, childId: item.childId, fields: { name: f.name, wantedGift: f.gift, birthDate: f.birthDate, location: moveCommunity } }],
+        context: { campaignId, cityId, communityId: moveCommunity ? communityId : null, schoolId: changeSchool ? schoolId : null },
+        updates: [{ key: item.key, childId: item.childId, fields: { name: f.name, wantedGift: f.gift, birthDate: f.birthDate, location: moveCommunity || changeSchool } }],
       }));
       const after = await this.snapshot(item.childId, campaignId);
       const rec = await this.audit.record(actor, {

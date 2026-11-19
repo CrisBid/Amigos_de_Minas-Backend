@@ -66,6 +66,24 @@ export class SourceCheckService {
     return this.google.listFolder(c.sourcePhotosFolderId);
   }
 
+  /** Comunidades cadastradas (inclusive as excluídas), para achar as da planilha que faltam */
+  async communities() {
+    return this.prisma.community.findMany({
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, cityId: true, deletedAt: true },
+    });
+  }
+
+  /** Escolas cadastradas (de todas as cidades), com as comunidades que atendem — para ligar às da planilha */
+  async schools() {
+    const rows = await this.prisma.school.findMany({
+      where: { deletedAt: null },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, cityId: true, communities: { select: { communityId: true } }, _count: { select: { children: true } } },
+    });
+    return rows.map((s) => ({ id: s.id, name: s.name, cityId: s.cityId, communityIds: s.communities.map((c) => c.communityId), children: s._count.children }));
+  }
+
   /** MD5 da foto original de cada criança nesta campanha (mesma conta que o Drive faz) */
   async siteMd5(campaignId: string, childIdsRaw: string[]) {
     await this.campaign(campaignId);
