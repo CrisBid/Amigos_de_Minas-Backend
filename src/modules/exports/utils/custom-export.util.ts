@@ -91,7 +91,8 @@ export function groupLabel(r: ExportRow, by: GroupBy): string {
   switch (by) {
     case 'community': return r.community ? `${r.community}${r.city ? ` (${r.city})` : ''}` : `Sem comunidade${r.city ? ` (${r.city})` : ''}`;
     case 'city': return r.city || 'Sem cidade';
-    case 'school': return r.school || 'Sem escola';
+    // a mesma escola pode atender várias comunidades: cada comunidade fica com o seu grupo
+    case 'school': return `${r.community || 'Sem comunidade'}${r.city ? ` (${r.city})` : ''} › ${r.school || 'Sem escola declarada'}`;
     case 'sponsor': return r.unsponsored ? FREE_LABEL : r.sponsorName || 'Sem padrinho';
     case 'collectionPoint': return r.unsponsored ? FREE_LABEL : r.collectionPoint || 'Sem ponto de coleta';
     default: return 'Apadrinhamentos';
@@ -118,7 +119,10 @@ export function groupRows(rows: ExportRow[], by: GroupBy, sortBy: SortBy = 'name
   for (const r of rows) {
     const label = groupLabel(r, by);
     // as sem padrinho (quando o grupo é padrinho ou ponto de coleta) ficam no fim
-    const sort = label === FREE_LABEL ? '\uffff' : by === 'community' ? `${r.city ?? '~'}|${r.community ?? '~'}` : label;
+    const sort = label === FREE_LABEL ? '\uffff'
+      : by === 'community' ? `${r.city ?? '~'}|${r.community ?? '~'}`
+      : by === 'school' ? `${r.city ?? '~'}|${r.community ?? '~'}|${r.school ?? '\uffff'}`
+      : label;
     const g = map.get(label) ?? { label, sort, rows: [] };
     g.rows.push(r);
     map.set(label, g);

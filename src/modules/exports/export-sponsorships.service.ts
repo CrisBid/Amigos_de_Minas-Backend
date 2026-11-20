@@ -65,6 +65,12 @@ export class ExportSponsorshipsService {
       case ExportLevel.COMMUNITY:
         if (query.communityId) where.child = { communityId: query.communityId };
         break;
+      case ExportLevel.SCHOOL: {
+        const sw = this.schoolWhere(query);
+        if (!sw) return [];
+        where.child = sw;
+        break;
+      }
       case ExportLevel.SPONSOR:
         if (query.sponsorId) where.sponsorId = query.sponsorId;
         break;
@@ -164,6 +170,12 @@ export class ExportSponsorshipsService {
         if (!query.communityId) return [];
         where.communityId = query.communityId;
         break;
+      case ExportLevel.SCHOOL: {
+        const sw = this.schoolWhere(query);
+        if (!sw) return [];
+        Object.assign(where, sw);
+        break;
+      }
       case ExportLevel.SPONSOR:
       case ExportLevel.SELECTION:
         return [];
@@ -202,6 +214,16 @@ export class ExportSponsorshipsService {
         createdAt: null,
       };
     });
+  }
+
+  /** Recorte por escola: a escola (opcional: numa comunidade) ou as crianças sem escola declarada na cidade */
+  private schoolWhere(query: ExportSponsorshipsQueryDto): Prisma.ChildWhereInput | null {
+    if (!query.schoolId) return null;
+    if (query.schoolId === 'none') {
+      if (!query.cityId) return null;
+      return { schoolId: null, cityId: query.cityId, ...(query.communityId ? { communityId: query.communityId } : {}) };
+    }
+    return { schoolId: query.schoolId, ...(query.communityId ? { communityId: query.communityId } : {}) };
   }
 
   /** Colunas pedidas (na ordem pedida); sem nenhuma válida, as padrão */

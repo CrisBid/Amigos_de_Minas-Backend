@@ -5,6 +5,7 @@ import { Type } from 'class-transformer';
 export enum ExportLevel {
   GENERAL = 'general',
   CITY = 'city',
+  SCHOOL = 'school',
   COMMUNITY = 'community',
   SPONSOR = 'sponsor',
   SELECTION = 'selection',
@@ -24,6 +25,14 @@ export class ExportSponsorshipsQueryDto {
   @IsString()
   @IsOptional()
   communityId?: string;
+
+  /**
+   * Use quando level = school: o id da escola, ou "none" para as crianças sem escola
+   * declarada (junto com cityId). communityId opcional restringe a uma comunidade.
+   */
+  @IsString()
+  @IsOptional()
+  schoolId?: string;
 
   /** Use quando level = sponsor */
   @IsString()
