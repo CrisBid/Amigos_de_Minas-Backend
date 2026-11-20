@@ -264,7 +264,8 @@ export class SponsorshipsService {
     if (!unique.length) return [];
     const rows = await this.prisma.sponsorship.findMany({
       where: { id: { in: unique } },
-      select: { ...this.sponsorshipSelectForMe, sponsor: { select: { id: true, name: true } } },
+      // contato do padrinho: o PDF separado por padrinho mostra no cabeçalho de cada um (rota só da equipe)
+      select: { ...this.sponsorshipSelectForMe, sponsor: { select: { id: true, name: true, email: true, phone: true, profile: { select: { phone: true } } } } },
     });
     const layouts = await loadCampaignLayouts(this.prisma, rows.map((r) => r.campaign.id));
     const order = new Map(unique.map((id, i) => [id, i]));
