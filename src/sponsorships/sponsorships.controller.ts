@@ -89,6 +89,15 @@ export class SponsorshipsController {
     return this.service.forPdf(dto.sponsorshipIds);
   }
 
+  // POST /sponsorships/pdf-data-children -> { campaignId, childIds } crianças sem padrinho, no mesmo formato
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN','STAFF')
+  @Post('pdf-data-children')
+  @HttpCode(200)
+  pdfDataChildren(@Body() body: { campaignId?: string; childIds?: string[] }) {
+    return this.service.forPdfChildren(String(body?.campaignId ?? ''), Array.isArray(body?.childIds) ? body.childIds : []);
+  }
+
   // PATCH genérico — regras no service
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateSponsorshipDto, @Req() req: any) {

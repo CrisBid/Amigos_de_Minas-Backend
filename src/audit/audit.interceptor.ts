@@ -11,7 +11,7 @@ export const AuditSkip = () => SetMetadata(AUDIT_SKIP, true);
 const SKIP_PATHS = [
   /^\/auth\//,
   /^\/children\/bulk\/update\/(preview|photo-hashes)$/,
-  /^\/sponsorships\/pdf-data$/,
+  /^\/sponsorships\/pdf-data(-children)?$/,
   /^\/source-check\/(site-md5|plan)$/,
   /^\/notifications\/test$/,
 ];

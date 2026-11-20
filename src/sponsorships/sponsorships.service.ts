@@ -279,6 +279,29 @@ export class SponsorshipsService {
       .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   }
 
+  /**
+   * Crianças da campanha sem padrinho, no mesmo formato do pdf-data (um "apadrinhamento" sem
+   * padrinho), com a imagem desta campanha — para o PDF de cartões incluí-las.
+   */
+  async forPdfChildren(campaignId: string, childIds: string[]) {
+    if (!campaignId) throw new BadRequestException('Informe a campanha.');
+    const ids = [...new Set((childIds ?? []).filter((x) => typeof x === 'string' && x))].slice(0, 2000);
+    if (!ids.length) return [];
+    const campaign = await this.prisma.campaign.findUnique({ where: { id: campaignId }, select: this.campaignSelectShort });
+    if (!campaign) throw new BadRequestException('Campanha não encontrada.');
+    const children = await this.prisma.child.findMany({ where: { id: { in: ids }, deletedAt: null }, select: this.childSelectFull });
+    const layouts = await loadCampaignLayouts(this.prisma, [campaignId]);
+    const order = new Map(ids.map((id, i) => [id, i]));
+    return children
+      .map((child) => {
+        const row = { id: `free:${child.id}`, status: 'PENDING' as const, unsponsored: true, campaignId, child, campaign, sponsor: null, collectionPoint: null };
+        applySponsorshipCampaignData(row);
+        applyCampaignImage(row.child as any, campaignId, layouts.get(campaignId));
+        return row;
+      })
+      .sort((a, b) => (order.get(a.child.id) ?? 0) - (order.get(b.child.id) ?? 0));
+  }
+
   async listAll(campaignId?: string) {
     const rows = await this.prisma.sponsorship.findMany({
       where: campaignId ? { campaignId } : undefined,

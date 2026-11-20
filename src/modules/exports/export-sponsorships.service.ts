@@ -5,7 +5,8 @@ import { ExportLevel, ExportSponsorshipsQueryDto } from './dto/export-sponsorshi
 import { buildCustomExcel, DEFAULT_FIELDS, EXPORT_FIELDS, ExportRow, GroupBy, sponsorContacts } from './utils/custom-export.util';
 // Opcional: se quiser tipar os filtros com os enums:
 import { SponsorshipStatus, SponsorshipMethod } from '@prisma/client';
-import { applySponsorshipCampaignData, campaignDataSelect } from '../../common/child-campaign-data';
+import { applyCampaignData, applySponsorshipCampaignData, campaignDataSelect } from '../../common/child-campaign-data';
+import { Prisma } from '@prisma/client';
 
 function calcAge(birth: Date | null): number | null {
   if (!birth) return null;
@@ -109,11 +110,12 @@ export class ExportSponsorshipsService {
       },
     });
 
-    return sponsorships.map(applySponsorshipCampaignData).map((sp): ExportRow => {
+    const rows = sponsorships.map(applySponsorshipCampaignData).map((sp): ExportRow => {
       const child = sp.child;
       const birthDate: Date | null = child?.birthDate ?? null;
       return {
         sponsorshipId: sp.id,
+        childId: child?.id ?? null,
         publicId: child?.publicId ?? null,
         childName: child?.name ?? '',
         birthDate: birthDate ? birthDate.toISOString().slice(0, 10) : null,
@@ -135,6 +137,69 @@ export class ExportSponsorshipsService {
           ? `${sp.collectionPoint.name}${sp.collectionPoint.cityName ? ` (${sp.collectionPoint.cityName})` : ''}`
           : null,
         createdAt: sp.createdAt ? sp.createdAt.toISOString() : null,
+      };
+    });
+    if (query.includeUnsponsored === '1') rows.push(...(await this.unsponsoredRows(query)));
+    return rows;
+  }
+
+  /**
+   * Crianças da campanha no recorte (todas, a cidade ou a comunidade) sem apadrinhamento —
+   * cancelado conta como sem padrinho. Não se aplica ao recorte por padrinho ou por lista de IDs.
+   */
+  private async unsponsoredRows(query: ExportSponsorshipsQueryDto): Promise<ExportRow[]> {
+    const campaignId = query.campaignId;
+    if (!campaignId) return [];
+    const where: Prisma.ChildWhereInput = {
+      deletedAt: null,
+      OR: [{ images: { some: { campaignId } } }, { campaignIncludes: { some: { campaignId } } }],
+      sponsorships: { none: { campaignId, status: { not: SponsorshipStatus.CANCELLED } } },
+    };
+    switch (query.level) {
+      case ExportLevel.CITY:
+        if (!query.cityId) return [];
+        where.cityId = query.cityId;
+        break;
+      case ExportLevel.COMMUNITY:
+        if (!query.communityId) return [];
+        where.communityId = query.communityId;
+        break;
+      case ExportLevel.SPONSOR:
+      case ExportLevel.SELECTION:
+        return [];
+      default:
+        break;
+    }
+    const children = await this.prisma.child.findMany({
+      where,
+      select: {
+        id: true, publicId: true, name: true, birthDate: true, age: true, wantedGift: true, motherName: true, cityName: true,
+        city: { select: { name: true } },
+        community: { select: { name: true } },
+        school: { select: { name: true } },
+        campaignData: campaignDataSelect,
+      },
+    });
+    return children.map((c) => {
+      applyCampaignData(c, campaignId);
+      return {
+        sponsorshipId: `free:${c.id}`,
+        childId: c.id,
+        unsponsored: true,
+        publicId: c.publicId ?? null,
+        childName: c.name ?? '',
+        birthDate: c.birthDate ? c.birthDate.toISOString().slice(0, 10) : null,
+        age: calcAge(c.birthDate) ?? c.age ?? null,
+        gift: c.wantedGift ?? null,
+        mother: c.motherName ?? null,
+        city: c.city?.name ?? c.cityName ?? null,
+        community: c.community?.name ?? null,
+        school: c.school?.name ?? null,
+        sponsorId: null, sponsorName: null, sponsorEmail: null, sponsorPhone: null,
+        method: null, donationAmount: null,
+        status: null, statusLabel: 'Sem padrinho',
+        collectionPoint: null,
+        createdAt: null,
       };
     });
   }
@@ -166,7 +231,7 @@ export class ExportSponsorshipsService {
       layout: query.layout === 'single' ? 'single' : 'tabs',
       sponsorList: query.sponsorList !== '0',
       giftSummary: query.giftSummary !== '0',
-      sortBy: query.sortBy === 'id' ? 'id' : 'name',
+      sortBy: query.sortBy === 'id' || query.sortBy === 'sponsor' ? query.sortBy : 'name',
     });
   }
 }

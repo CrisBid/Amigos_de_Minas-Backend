@@ -81,7 +81,12 @@ export class ExportSponsorshipsQueryDto {
   @IsOptional()
   giftSummary?: string;
 
-  /** ordem dentro do grupo: name (padrão) | id */
+  /** 1 = inclui as crianças da campanha ainda sem padrinho (recorte geral, cidade ou comunidade) */
+  @IsString()
+  @IsOptional()
+  includeUnsponsored?: string;
+
+  /** ordem dentro do grupo: name (padrão) | id | sponsor */
   @IsString()
   @IsOptional()
   sortBy?: string;

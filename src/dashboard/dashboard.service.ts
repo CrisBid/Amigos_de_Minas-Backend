@@ -2,23 +2,25 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, SponsorshipStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-const IN_PROGRESS: SponsorshipStatus[] = ['IN_PROGRESS', 'IN_PURCHASE', 'PACKED', 'BOXED', 'AWAITING_DELIVERY'];
-const CLOSED: SponsorshipStatus[] = ['ENDED', 'CANCELLED'];
+/** Situação de cada criança: o status do apadrinhamento (sem cancelado) ou disponível */
+type ChildKey = Exclude<SponsorshipStatus, 'CANCELLED'> | 'AVAILABLE';
+const CHILD_KEYS: ChildKey[] = ['PENDING', 'IN_PROGRESS', 'AWAITING_DELIVERY', 'IN_PURCHASE', 'PACKED', 'BOXED', 'COMPLETED', 'ENDED', 'AVAILABLE'];
 const DAY = 864e5;
 /** Datas agrupadas no fuso de Brasília (sem horário de verão desde 2019) */
 const localDay = (d: Date) => new Date(d.getTime() - 3 * 36e5).toISOString().slice(0, 10);
 
-type ChildState = 'completed' | 'inProgress' | 'pending' | 'available';
 type Group = {
   id: string;
   name: string;
-  cityName?: string | null;
+  cityId: string | null;
+  cityName: string | null;
   total: number;
-  completed: number;
-  inProgress: number;
-  pending: number;
-  available: number;
+  /** já têm padrinho (aprovado em diante, sem encerrados) */
+  sponsored: number;
+  sponsoredRate: number;
   withoutPhoto: number;
+  withoutGift: number;
+  counts: Record<ChildKey, number>;
 };
 
 type Activity = {
@@ -97,88 +99,130 @@ export class DashboardService {
           pixPaidAt: true,
           createdAt: true,
           collectionPointId: true,
-          collectionPoint: { select: { name: true } },
-          sponsor: { select: { name: true } },
+          collectionPoint: { select: { name: true, cityName: true } },
+          // painel só da equipe: contato do padrinho para a lista completa
+          sponsor: { select: { name: true, email: true, phone: true, profile: { select: { phone: true } } } },
+          child: { select: { community: { select: { name: true } }, city: { select: { name: true } } } },
         },
         orderBy: { createdAt: 'asc' },
       }),
     ]);
 
-    /* ---------- situação de cada criança: vale o apadrinhamento mais recente ---------- */
+    /* ---------- situação de cada criança: o status do apadrinhamento mais recente ---------- */
+    // cancelado ou sem pedido = disponível; encerrado aparece à parte
     const latestByChild = new Map<string, SponsorshipStatus>();
     for (const s of sponsorships) latestByChild.set(s.childId, s.status); // ordenado por createdAt asc
-    const stateOf = (childId: string): ChildState => {
+    const stateOf = (childId: string): ChildKey => {
       const st = latestByChild.get(childId);
-      if (!st || CLOSED.includes(st)) return 'available';
-      if (st === 'COMPLETED') return 'completed';
-      if (st === 'PENDING') return 'pending';
-      return 'inProgress';
+      return !st || st === 'CANCELLED' ? 'AVAILABLE' : st;
     };
+    const emptyCounts = () => Object.fromEntries(CHILD_KEYS.map((k) => [k, 0])) as Record<ChildKey, number>;
+    const isSponsored = (k: ChildKey) => k !== 'AVAILABLE' && k !== 'PENDING' && k !== 'ENDED';
+    const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
-    const totals = { total: 0, completed: 0, inProgress: 0, pending: 0, available: 0, withoutPhoto: 0, withoutGift: 0 };
+    const totals = { total: 0, withoutPhoto: 0, withoutGift: 0, counts: emptyCounts() };
     const byCity = new Map<string, Group>();
     const byCommunity = new Map<string, Group>();
-    const bump = (map: Map<string, Group>, key: string, init: () => Omit<Group, ChildState | 'total' | 'withoutPhoto'>, state: ChildState, noPhoto: boolean) => {
+    const bump = (map: Map<string, Group>, key: string, init: () => Pick<Group, 'id' | 'name' | 'cityId' | 'cityName'>, state: ChildKey, noPhoto: boolean, noGift: boolean) => {
       let g = map.get(key);
-      if (!g) map.set(key, (g = { ...init(), total: 0, completed: 0, inProgress: 0, pending: 0, available: 0, withoutPhoto: 0 }));
+      if (!g) map.set(key, (g = { ...init(), total: 0, withoutPhoto: 0, withoutGift: 0, sponsored: 0, sponsoredRate: 0, counts: emptyCounts() }));
       g.total++;
-      g[state]++;
+      g.counts[state]++;
+      if (isSponsored(state)) g.sponsored++;
       if (noPhoto) g.withoutPhoto++;
+      if (noGift) g.withoutGift++;
     };
 
     for (const c of children) {
       const state = stateOf(c.id);
       const noPhoto = c._count.images === 0;
       const gift = (campaignId ? (c as any).campaignData?.[0]?.wantedGift : null) ?? c.wantedGift;
+      const noGift = !gift?.trim();
       totals.total++;
-      totals[state]++;
+      totals.counts[state]++;
       if (noPhoto) totals.withoutPhoto++;
-      if (!gift?.trim()) totals.withoutGift++;
+      if (noGift) totals.withoutGift++;
 
       const cityName = c.city?.name ?? c.cityName ?? 'Sem cidade';
-      bump(byCity, c.cityId ?? `name:${cityName}`, () => ({ id: c.cityId ?? '', name: cityName }), state, noPhoto);
+      bump(byCity, c.cityId ?? `name:${cityName}`, () => ({ id: c.cityId ?? '', name: cityName, cityId: c.cityId ?? null, cityName }), state, noPhoto, noGift);
       bump(
         byCommunity,
         c.communityId ?? `none:${c.cityId ?? cityName}`,
-        () => ({ id: c.communityId ?? '', name: c.community?.name ?? 'Sem comunidade', cityName }),
-        state,
-        noPhoto,
+        () => ({ id: c.communityId ?? '', name: c.community?.name ?? 'Sem comunidade', cityId: c.cityId ?? null, cityName }),
+        state, noPhoto, noGift,
       );
     }
-    const sponsored = totals.completed + totals.inProgress;
-    const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
+    const finish = (map: Map<string, Group>) =>
+      [...map.values()].map((g) => ({ ...g, sponsoredRate: pct(g.sponsored, g.total) })).sort((a, b) => b.total - a.total);
+    const c = totals.counts;
+    const sponsored = CHILD_KEYS.filter(isSponsored).reduce((n, k) => n + c[k], 0);
 
     /* ---------- apadrinhamentos ---------- */
     const byStatus = Object.fromEntries(Object.keys(STATUS_PT).map((k) => [k, 0])) as Record<SponsorshipStatus, number>;
     const live = sponsorships.filter((s) => s.status !== 'CANCELLED');
+    const pixByStatus = Object.fromEntries(Object.keys(STATUS_PT).map((k) => [k, 0])) as Record<SponsorshipStatus, number>;
     const methods = {
-      GIFT: { count: 0 },
-      PIX: { count: 0, amount: 0, paidCount: 0, paidAmount: 0 },
+      GIFT: { count: 0, withoutPoint: 0 },
+      PIX: { count: 0, amount: 0, withAmount: 0, withoutAmount: 0, paidCount: 0, paidAmount: 0, byStatus: pixByStatus },
     };
-    const sponsorCount = new Map<string, { id: string; name: string; count: number }>();
-    const pointCount = new Map<string, { id: string; name: string; count: number }>();
+    type SponsorRow = {
+      id: string; name: string; email: string | null; phone: string | null; count: number; gift: number; pix: number; pixAmount: number;
+      byStatus: Partial<Record<SponsorshipStatus, number>>; communities: string[]; firstAt: string; lastAt: string;
+    };
+    type PointRow = {
+      id: string; name: string; cityName: string | null; kind: 'point' | 'pix' | 'none'; count: number;
+      byStatus: Partial<Record<SponsorshipStatus, number>>; sponsors: number; communities: string[];
+    };
+    const sponsorRows = new Map<string, SponsorRow & { _c: Set<string> }>();
+    const pointRows = new Map<string, PointRow & { _s: Set<string>; _c: Set<string> }>();
     for (const s of sponsorships) byStatus[s.status]++;
     for (const s of live) {
+      const place = s.child?.community?.name ? `${s.child.community.name}${s.child.city?.name ? ` (${s.child.city.name})` : ''}` : s.child?.city?.name ?? 'Sem comunidade';
+      const amount = s.donationAmount != null ? Number(s.donationAmount) : 0;
       if (s.method === 'PIX') {
-        const amount = s.donationAmount != null ? Number(s.donationAmount) : 0;
         methods.PIX.count++;
-        methods.PIX.amount += amount;
-        if (s.pixPaidAt) {
-          methods.PIX.paidCount++;
-          methods.PIX.paidAmount += amount;
-        }
+        methods.PIX.byStatus[s.status]++;
+        if (amount > 0) { methods.PIX.withAmount++; methods.PIX.amount += amount; } else methods.PIX.withoutAmount++;
+        if (s.pixPaidAt) { methods.PIX.paidCount++; methods.PIX.paidAmount += amount; }
       } else {
         methods.GIFT.count++;
-        if (s.collectionPointId) {
-          const p = pointCount.get(s.collectionPointId) ?? { id: s.collectionPointId, name: s.collectionPoint?.name ?? '—', count: 0 };
-          p.count++;
-          pointCount.set(s.collectionPointId, p);
-        }
+        if (!s.collectionPointId) methods.GIFT.withoutPoint++;
       }
-      const sp = sponsorCount.get(s.sponsorId) ?? { id: s.sponsorId, name: s.sponsor?.name ?? 'Padrinho', count: 0 };
+
+      // por ponto de coleta (PIX e presente sem ponto ficam em grupos próprios)
+      const pk = s.method === 'PIX' ? '__pix' : s.collectionPointId ?? '__none';
+      const p = pointRows.get(pk) ?? {
+        id: s.method === 'PIX' ? '' : s.collectionPointId ?? '',
+        name: s.method === 'PIX' ? 'PIX (presente comprado pela equipe)' : s.collectionPoint?.name ?? 'Presente sem ponto de coleta',
+        cityName: s.method === 'PIX' ? null : s.collectionPoint?.cityName ?? null,
+        kind: s.method === 'PIX' ? 'pix' as const : s.collectionPointId ? 'point' as const : 'none' as const,
+        count: 0, byStatus: {}, sponsors: 0, communities: [], _s: new Set<string>(), _c: new Set<string>(),
+      };
+      p.count++;
+      p.byStatus[s.status] = (p.byStatus[s.status] ?? 0) + 1;
+      p._s.add(s.sponsorId);
+      p._c.add(place);
+      pointRows.set(pk, p);
+
+      const sp = sponsorRows.get(s.sponsorId) ?? {
+        id: s.sponsorId, name: s.sponsor?.name ?? 'Padrinho', email: s.sponsor?.email ?? null,
+        phone: s.sponsor?.profile?.phone || s.sponsor?.phone || null,
+        count: 0, gift: 0, pix: 0, pixAmount: 0, byStatus: {}, communities: [], _c: new Set<string>(),
+        firstAt: s.createdAt.toISOString(), lastAt: s.createdAt.toISOString(),
+      };
       sp.count++;
-      sponsorCount.set(s.sponsorId, sp);
+      if (s.method === 'PIX') { sp.pix++; sp.pixAmount += amount; } else sp.gift++;
+      sp.byStatus[s.status] = (sp.byStatus[s.status] ?? 0) + 1;
+      sp._c.add(place);
+      sp.lastAt = s.createdAt.toISOString();
+      sponsorRows.set(s.sponsorId, sp);
     }
+    const sponsorsAll = [...sponsorRows.values()]
+      .map(({ _c, ...s }) => ({ ...s, communities: [..._c].sort((a, b) => a.localeCompare(b, 'pt-BR')) }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'pt-BR'));
+    const pointsAll = [...pointRows.values()]
+      .map(({ _s, _c, ...p }) => ({ ...p, sponsors: _s.size, communities: [..._c].sort((a, b) => a.localeCompare(b, 'pt-BR')) }))
+      .sort((a, b) => Number(a.kind !== 'point') - Number(b.kind !== 'point') || b.count - a.count);
 
     /* ---------- pendências ---------- */
     const pendingRows = sponsorships.filter((s) => s.status === 'PENDING');
@@ -211,15 +255,17 @@ export class DashboardService {
         sponsored,
         sponsoredRate: pct(sponsored, totals.total),
         // com pedido em andamento ou já apadrinhada (inclui pendentes)
-        reservedRate: pct(sponsored + totals.pending, totals.total),
+        reservedRate: pct(sponsored + c.PENDING, totals.total),
       },
       sponsorships: {
         total: live.length,
         byStatus,
         methods,
-        sponsors: sponsorCount.size,
-        topSponsors: [...sponsorCount.values()].sort((a, b) => b.count - a.count).slice(0, 5),
-        collectionPoints: [...pointCount.values()].sort((a, b) => b.count - a.count),
+        sponsors: sponsorRows.size,
+        topSponsors: sponsorsAll.slice(0, 5).map((s) => ({ id: s.id, name: s.name, count: s.count })),
+        sponsorsAll,
+        collectionPoints: pointsAll.filter((p) => p.kind === 'point').map((p) => ({ id: p.id, name: p.name, count: p.count })),
+        pointsAll,
       },
       pending: {
         count: pendingRows.length,
@@ -227,8 +273,8 @@ export class DashboardService {
         over3Days: pendingOver3Days,
       },
       timeline: { days, last7, prev7 },
-      byCity: [...byCity.values()].sort((a, b) => b.total - a.total),
-      byCommunity: [...byCommunity.values()].sort((a, b) => b.total - a.total),
+      byCity: finish(byCity),
+      byCommunity: finish(byCommunity),
       activity: await this.activity(campaignId, childWhere),
     };
   }
