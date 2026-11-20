@@ -81,6 +81,16 @@ export class ExportSponsorshipsQueryDto {
   @IsOptional()
   giftSummary?: string;
 
+  /** colunas da lista de padrinhos: ?sponsorFields=name,count,method,email,phone */
+  @IsString()
+  @IsOptional()
+  sponsorFields?: string;
+
+  /** 1 = aba com o resumo dos pontos de coleta */
+  @IsString()
+  @IsOptional()
+  pointsSummary?: string;
+
   /** 1 = inclui as crianças da campanha ainda sem padrinho (recorte geral, cidade ou comunidade) */
   @IsString()
   @IsOptional()

@@ -196,6 +196,95 @@ export function giftSummary(rows: ExportRow[], by: GroupBy) {
   });
 }
 
+/* —— padrinhos e pontos de coleta do conjunto exportado —— */
+
+/** Colunas da lista de padrinhos (página/aba final) */
+export const SPONSOR_FIELDS: { key: string; label: string; width: number; weight: number; default?: boolean }[] = [
+  { key: 'name', label: 'Padrinho', width: 30, weight: 2.2, default: true },
+  { key: 'count', label: 'Crianças', width: 10, weight: 0.8, default: true },
+  { key: 'method', label: 'Forma', width: 20, weight: 1.4, default: true },
+  { key: 'email', label: 'E-mail', width: 32, weight: 2.2, default: true },
+  { key: 'phone', label: 'Telefone', width: 18, weight: 1.3, default: true },
+  { key: 'pixAmount', label: 'Valor PIX', width: 12, weight: 1 },
+  { key: 'points', label: 'Pontos de coleta', width: 30, weight: 2 },
+  { key: 'communities', label: 'Comunidades', width: 34, weight: 2.2 },
+  { key: 'ids', label: 'IDs das crianças', width: 34, weight: 2 },
+];
+export const DEFAULT_SPONSOR_FIELDS = SPONSOR_FIELDS.filter((f) => f.default).map((f) => f.key);
+
+export type SponsorStats = {
+  id: string; name: string; email: string | null; phone: string | null;
+  count: number; gift: number; pix: number; pixAmount: number;
+  points: string[]; communities: string[]; ids: number[];
+};
+
+/** Um padrinho por linha, com o que ele tem neste conjunto */
+export function sponsorStats(rows: ExportRow[]): SponsorStats[] {
+  const map = new Map<string, SponsorStats & { _p: Set<string>; _c: Set<string> }>();
+  for (const r of rows) {
+    if (r.unsponsored || !r.sponsorId) continue;
+    const s = map.get(r.sponsorId) ?? {
+      id: r.sponsorId, name: r.sponsorName ?? '', email: r.sponsorEmail, phone: r.sponsorPhone,
+      count: 0, gift: 0, pix: 0, pixAmount: 0, points: [], communities: [], ids: [], _p: new Set<string>(), _c: new Set<string>(),
+    };
+    s.count++;
+    if (r.method === 'PIX') { s.pix++; s.pixAmount += r.donationAmount ?? 0; } else s.gift++;
+    if (r.collectionPoint) s._p.add(r.collectionPoint);
+    if (r.community || r.city) s._c.add(groupLabel(r, 'community'));
+    if (r.publicId != null) s.ids.push(r.publicId);
+    map.set(r.sponsorId, s);
+  }
+  return [...map.values()]
+    .map(({ _p, _c, ...s }) => ({ ...s, points: [..._p].sort(cmp), communities: [..._c].sort(cmp), ids: [...s.ids].sort((a, b) => a - b) }))
+    .sort((a, b) => cmp(a.name, b.name));
+}
+
+/** "2 presentes · 1 PIX" */
+export const methodText = (gift: number, pix: number) =>
+  [gift ? `${gift} presente${gift === 1 ? '' : 's'}` : '', pix ? `${pix} PIX` : ''].filter(Boolean).join(' · ');
+
+export function sponsorCell(s: SponsorStats, key: string): string | number {
+  switch (key) {
+    case 'name': return s.name;
+    case 'count': return s.count;
+    case 'method': return methodText(s.gift, s.pix);
+    case 'email': return s.email ?? '';
+    case 'phone': return s.phone ?? '';
+    case 'pixAmount': return s.pixAmount ? s.pixAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '';
+    case 'points': return s.points.join('; ');
+    case 'communities': return s.communities.join('; ');
+    case 'ids': return s.ids.join(', ');
+    default: return '';
+  }
+}
+
+export type PointSummary = {
+  label: string; kind: 'point' | 'pix' | 'none';
+  children: number; sponsors: number; received: number; pending: number; communities: string[];
+};
+/** já recebidos no galpão ou entregues */
+const RECEIVED_STATUS = ['PACKED', 'BOXED', 'COMPLETED'];
+
+/** Resumo por ponto de coleta (PIX e presente sem ponto em linhas próprias; sem padrinho fica de fora) */
+export function pointSummary(rows: ExportRow[]): PointSummary[] {
+  const map = new Map<string, PointSummary & { _s: Set<string>; _c: Set<string> }>();
+  for (const r of rows) {
+    if (r.unsponsored) continue;
+    const kind: PointSummary['kind'] = r.method === 'PIX' ? 'pix' : r.collectionPoint ? 'point' : 'none';
+    const label = kind === 'pix' ? 'PIX (presente comprado pela equipe)' : kind === 'none' ? 'Presente sem ponto de coleta' : r.collectionPoint!;
+    const p = map.get(label) ?? { label, kind, children: 0, sponsors: 0, received: 0, pending: 0, communities: [], _s: new Set<string>(), _c: new Set<string>() };
+    p.children++;
+    if (r.status && RECEIVED_STATUS.includes(r.status)) p.received++;
+    if (r.status === 'PENDING') p.pending++;
+    if (r.sponsorId) p._s.add(r.sponsorId);
+    if (r.community || r.city) p._c.add(groupLabel(r, 'community'));
+    map.set(label, p);
+  }
+  return [...map.values()]
+    .map(({ _s, _c, ...p }) => ({ ...p, sponsors: _s.size, communities: [..._c].sort(cmp) }))
+    .sort((a, b) => Number(a.kind !== 'point') - Number(b.kind !== 'point') || cmp(a.label, b.label));
+}
+
 /** Nome de aba válido no Excel (31 letras, sem : \ / ? * [ ]) e sem repetir */
 function sheetName(label: string, used: Set<string>) {
   const base = label.replace(/[:\\/?*[\]]/g, '-').trim().slice(0, 31) || 'Aba';
@@ -234,6 +323,10 @@ export async function buildCustomExcel(opts: {
   giftSummary?: boolean;
   sortBy?: SortBy;
   title?: string;
+  /** colunas da aba de padrinhos */
+  sponsorFields?: string[];
+  /** aba com o resumo dos pontos de coleta */
+  pointsSummary?: boolean;
 }) {
   const fields = opts.fields.map((k) => EXPORT_FIELDS.find((f) => f.key === k)).filter(Boolean) as typeof EXPORT_FIELDS;
   const wb = new ExcelJS.Workbook();
@@ -295,24 +388,38 @@ export async function buildCustomExcel(opts: {
     }
   }
 
-  if (opts.sponsorList) {
-    const ws = wb.addWorksheet(sheetName('Padrinhos', used), { views: [{ state: 'frozen', ySplit: 1 }] });
+  if (opts.pointsSummary) {
+    const ws = wb.addWorksheet(sheetName('Pontos de coleta', used), { views: [{ state: 'frozen', ySplit: 1 }] });
     ws.columns = [
-      { header: 'Padrinho', key: 'name', width: 32 },
-      { header: 'E-mail', key: 'email', width: 34 },
-      { header: 'Telefone', key: 'phone', width: 18 },
+      { header: 'Ponto de coleta', key: 'label', width: 40 },
       { header: 'Crianças', key: 'children', width: 10 },
-      { header: 'IDs das crianças', key: 'ids', width: 40 },
+      { header: 'Padrinhos', key: 'sponsors', width: 10 },
+      { header: 'Recebidos', key: 'received', width: 11 },
+      { header: 'Pendentes', key: 'pending', width: 11 },
+      { header: 'Comunidades', key: 'communities', width: 60 },
     ];
     styleHeader(ws.getRow(1));
-    for (const g of sponsorGroups(opts.rows, opts.groupBy, opts.sortBy ?? 'name')) {
-      const t = ws.addRow([`${g.label} — ${g.sponsors.length} padrinho(s)`]);
-      ws.mergeCells(t.number, 1, t.number, 5);
+    for (const p of pointSummary(opts.rows)) {
+      ws.addRow({ ...p, communities: p.communities.join('; ') }).alignment = { vertical: 'top', wrapText: true };
+    }
+  }
+
+  if (opts.sponsorList) {
+    const sf = (opts.sponsorFields?.length ? opts.sponsorFields : DEFAULT_SPONSOR_FIELDS)
+      .map((k) => SPONSOR_FIELDS.find((f) => f.key === k)).filter(Boolean) as typeof SPONSOR_FIELDS;
+    const ws = wb.addWorksheet(sheetName('Padrinhos', used), { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = sf.map((f) => ({ header: f.label, key: f.key, width: f.width }));
+    styleHeader(ws.getRow(1));
+    // separados pelo mesmo grupo da lista (comunidade, se for por padrinho ou sem grupo)
+    const by: GroupBy = opts.groupBy === 'city' || opts.groupBy === 'school' || opts.groupBy === 'collectionPoint' ? opts.groupBy : 'community';
+    for (const g of groupRows(opts.rows.filter((r) => r.sponsorId && !r.unsponsored), by, opts.sortBy ?? 'name')) {
+      const list = sponsorStats(g.rows);
+      const t = ws.addRow([`${g.label} — ${list.length} padrinho(s)`]);
+      ws.mergeCells(t.number, 1, t.number, Math.max(1, sf.length));
       t.getCell(1).font = { bold: true, color: { argb: 'FF1F5F47' } };
       t.getCell(1).fill = GROUP_FILL;
-      for (const s of g.sponsors) {
-        ws.addRow({ name: s.name, email: s.email ?? '', phone: s.phone ?? '', children: s.children, ids: s.ids.join(', ') })
-          .alignment = { vertical: 'top', wrapText: true };
+      for (const s of list) {
+        ws.addRow(Object.fromEntries(sf.map((f) => [f.key, sponsorCell(s, f.key)]))).alignment = { vertical: 'top', wrapText: true };
       }
     }
   }

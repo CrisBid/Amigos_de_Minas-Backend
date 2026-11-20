@@ -2,7 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExportLevel, ExportSponsorshipsQueryDto } from './dto/export-sponsorships.dto';
-import { buildCustomExcel, DEFAULT_FIELDS, EXPORT_FIELDS, ExportRow, GroupBy, sponsorContacts } from './utils/custom-export.util';
+import { buildCustomExcel, DEFAULT_FIELDS, EXPORT_FIELDS, ExportRow, GroupBy, SPONSOR_FIELDS, sponsorContacts } from './utils/custom-export.util';
 // Opcional: se quiser tipar os filtros com os enums:
 import { SponsorshipStatus, SponsorshipMethod } from '@prisma/client';
 import { applyCampaignData, applySponsorshipCampaignData, campaignDataSelect } from '../../common/child-campaign-data';
@@ -231,6 +231,8 @@ export class ExportSponsorshipsService {
       layout: query.layout === 'single' ? 'single' : 'tabs',
       sponsorList: query.sponsorList !== '0',
       giftSummary: query.giftSummary !== '0',
+      pointsSummary: query.pointsSummary === '1',
+      sponsorFields: (query.sponsorFields ?? '').split(',').map((s) => s.trim()).filter((k) => SPONSOR_FIELDS.some((f) => f.key === k)),
       sortBy: query.sortBy === 'id' || query.sortBy === 'sponsor' ? query.sortBy : 'name',
     });
   }
